@@ -42,7 +42,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build_cmd.set_defaults(handler=_handle_build)
 
-    build_all_cmd = subparsers.add_parser("build-all", help="Build all specs in assets_src/specs")
+    build_all_cmd = subparsers.add_parser("build-all", help="Build all specs in assets_pipeline/inputs")
     build_all_cmd.add_argument("--force", action="store_true", help="Regenerate all artifacts")
     build_all_cmd.add_argument("--skip-images", action="store_true", help="Skip Images API step")
     build_all_cmd.add_argument(
@@ -69,7 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_all_cmd.set_defaults(handler=_handle_build_all)
 
     new_cmd = subparsers.add_parser("new", help="Create a new YAML spec from natural language")
-    new_cmd.add_argument("name", help="Spec name (file will be assets_src/specs/<name>.yaml)")
+    new_cmd.add_argument("name", help="Spec name (file will be assets_pipeline/inputs/<name>.yaml)")
     new_cmd.add_argument("--desc", required=True, help="Short description of the asset")
     new_cmd.set_defaults(handler=_handle_new)
 

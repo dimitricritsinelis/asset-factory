@@ -11,17 +11,18 @@ __pycache__/
 assets/models/*.glb
 assets/thumbnails/*.png
 assets/reports/*.json
-assets_src/refs/*.png
-assets_src/recipes/*.json
-assets_src/blender/*.blend
-assets_src/tripo_raw/
-assets_src/logs/*.log
-assets_src/logs/*_prompt.txt
+assets_pipeline/refs/*.png
+assets_pipeline/recipes/*.json
+assets_pipeline/blender/*.blend
+assets_pipeline/tripo_raw/
+assets_pipeline/logs/*.log
+assets_pipeline/logs/*_prompt.txt
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
 
-assets_src/logs/*.txt
+assets_pipeline/logs/*.txt
 *.blend1
+assets_src_legacy/

@@ -127,17 +127,23 @@ def resolve_spec_path(spec_path_or_name: str, project_root: Path) -> Path:
     if explicit.exists():
         return explicit
 
-    specs_dir = project_root / "assets_src" / "specs"
-    if explicit.suffix in {".yaml", ".yml"}:
-        candidate = specs_dir / explicit.name
-    else:
-        candidate = specs_dir / f"{spec_path_or_name}.yaml"
-
-    if candidate.exists():
-        return candidate
+    spec_dirs = [
+        project_root / "assets_pipeline" / "inputs",
+        project_root / "assets_src" / "specs",
+    ]
+    candidate = spec_dirs[0] / (
+        explicit.name if explicit.suffix in {".yaml", ".yml"} else f"{spec_path_or_name}.yaml"
+    )
+    for specs_dir in spec_dirs:
+        current = specs_dir / (
+            explicit.name if explicit.suffix in {".yaml", ".yml"} else f"{spec_path_or_name}.yaml"
+        )
+        if current.exists():
+            return current
 
     raise FileNotFoundError(
-        f"Spec not found: {spec_path_or_name!r}. Expected path or {candidate}"
+        f"Spec not found: {spec_path_or_name!r}. Expected path or {candidate} "
+        "(or legacy assets_src/specs)."
     )
 
 

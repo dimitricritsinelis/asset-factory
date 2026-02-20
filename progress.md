@@ -11,8 +11,8 @@
 - `asset_factory/prompts.py`
 - `.env.example`
 - `README.md`
-- `assets_src/specs/ak47.yaml`
-- `assets_src/specs/enemy_raider_01.yaml`
+- `assets_pipeline/inputs/ak47.yaml`
+- `assets_pipeline/inputs/enemy_raider_01.yaml`
 
 ## What changed
 - Added quality preset/settings env controls (`ASSET_FACTORY_QUALITY_PRESET`, `CHARACTER_HERO_TRIS`, `CHARACTER_LOD1_TRIS`, `CHARACTER_TEX_SIZE`).
@@ -29,7 +29,7 @@
 - Added LOD1 path support (`assets/models/<name>_lod1.glb`) and normalize call wiring.
 - Added Tripo animation stage:
   - requests clip retarget tasks per requested clip
-  - downloads to `assets_src/tripo_raw/<name>/animations/<clip>.glb`
+  - downloads to `assets_pipeline/tripo_raw/<name>/animations/<clip>.glb`
   - continues on per-clip failure and records degraded reasons
 - Reworked Blender normalize mode to be character-safe:
   - no remesh path

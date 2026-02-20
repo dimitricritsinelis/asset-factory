@@ -23,7 +23,7 @@ Build reliable, reproducible 3D asset outputs from YAML specs with strict fallba
 ## Command and Path Discipline
 - Use commands already present in `Makefile` when possible.
 - Do not invent path conventions; follow:
-  - Source specs: `assets_src/specs/*.yaml`
+  - Source specs: `assets_pipeline/inputs/*.yaml`
   - Build outputs: `assets/models`, `assets/reports`, `assets/thumbnails`
   - Runtime targets: `apps/client/public/assets/models/...` (when configured)
 

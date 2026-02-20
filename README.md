@@ -6,7 +6,7 @@ YAML-first pipeline for generating game assets with:
 - Blender (deterministic normalize/export/QC)
 
 ## What This Tool Is
-- You edit YAML specs in `assets_src/specs/`.
+- You edit YAML specs in `assets_pipeline/inputs/`.
 - The pipeline builds GLBs, thumbnails, reports, and Blender files.
 - Character builds can auto-build and embed a weapon from another spec.
 - Offline mode is supported and always falls back to procedural output.
@@ -59,7 +59,7 @@ make build-all
 ```
 
 ## Asset Development Workflow
-1. Create/edit spec in `assets_src/specs/<name>.yaml`.
+1. Create/edit spec in `assets_pipeline/inputs/<name>.yaml`.
 2. Run offline first:
    - `make build NAME=<name> ARGS="--skip-openai --skip-images --force"`
 3. Run online (if desired):
@@ -67,7 +67,7 @@ make build-all
 4. Inspect outputs:
    - `assets/models/<name>.glb`
    - `assets/reports/<name>.json`
-   - `assets_src/blender/<name>.blend`
+   - `assets_pipeline/blender/<name>.blend`
    - `assets/thumbnails/<name>.png`
 5. Iterate spec (tri budget, style keywords, scale, colors, loadout attach offsets).
 
@@ -96,9 +96,9 @@ For `<name>`:
 - `assets/models/<name>_lod1.glb` (character path)
 - `assets/reports/<name>.json`
 - `assets/thumbnails/<name>.png`
-- `assets_src/blender/<name>.blend`
-- `assets_src/logs/<name>.log`
-- `assets_src/tripo_raw/<name>/...` (if Tripo used)
+- `assets_pipeline/blender/<name>.blend`
+- `assets_pipeline/logs/<name>.log`
+- `assets_pipeline/tripo_raw/<name>/...` (if Tripo used)
 
 ## Cleanup
 Remove temporary test artifacts:

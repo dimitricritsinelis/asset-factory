@@ -12,7 +12,7 @@ setup:
 	$(PIP) install -r requirements.txt
 
 smoke:
-	$(PY) -m asset_factory build assets_src/specs/smoke_cube.yaml --skip-openai --skip-images --force
+	$(PY) -m asset_factory build assets_pipeline/inputs/smoke_cube.yaml --skip-openai --skip-images --force
 
 build:
 	@test -n "$(NAME)" || (echo "Usage: make build NAME=<spec_name>" && exit 1)

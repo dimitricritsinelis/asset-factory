@@ -71,30 +71,30 @@ class WeaponBuildOutcome:
 
 
 def _artifact_paths(project_root: Path, name: str) -> ArtifactPaths:
-    tripo_raw = project_root / "assets_src" / "tripo_raw" / name
+    tripo_raw = project_root / "assets_pipeline" / "tripo_raw" / name
     return ArtifactPaths(
-        ref_image=project_root / "assets_src" / "refs" / f"{name}.png",
-        ref_sheet=project_root / "assets_src" / "refs" / f"{name}_sheet.png",
-        ref_front=project_root / "assets_src" / "refs" / f"{name}_front.png",
-        ref_side=project_root / "assets_src" / "refs" / f"{name}_side.png",
-        ref_back=project_root / "assets_src" / "refs" / f"{name}_back.png",
-        ref_top=project_root / "assets_src" / "refs" / f"{name}_top.png",
-        recipe_json=project_root / "assets_src" / "recipes" / f"{name}.json",
+        ref_image=project_root / "assets_pipeline" / "refs" / f"{name}.png",
+        ref_sheet=project_root / "assets_pipeline" / "refs" / f"{name}_sheet.png",
+        ref_front=project_root / "assets_pipeline" / "refs" / f"{name}_front.png",
+        ref_side=project_root / "assets_pipeline" / "refs" / f"{name}_side.png",
+        ref_back=project_root / "assets_pipeline" / "refs" / f"{name}_back.png",
+        ref_top=project_root / "assets_pipeline" / "refs" / f"{name}_top.png",
+        recipe_json=project_root / "assets_pipeline" / "recipes" / f"{name}.json",
         tripo_raw_dir=tripo_raw,
         tripo_task_json=tripo_raw / "task.json",
         tripo_model_glb=tripo_raw / "model.glb",
         tripo_pbr_glb=tripo_raw / "pbr.glb",
         tripo_render_png=tripo_raw / "rendered.png",
         tripo_animations_dir=tripo_raw / "animations",
-        blend_file=project_root / "assets_src" / "blender" / f"{name}.blend",
+        blend_file=project_root / "assets_pipeline" / "blender" / f"{name}.blend",
         glb_file=project_root / "assets" / "models" / f"{name}.glb",
         lod1_glb_file=project_root / "assets" / "models" / f"{name}_lod1.glb",
         thumbnail_png=project_root / "assets" / "thumbnails" / f"{name}.png",
         report_json=project_root / "assets" / "reports" / f"{name}.json",
-        build_log=project_root / "assets_src" / "logs" / f"{name}.log",
-        image_prompt_log=project_root / "assets_src" / "logs" / f"{name}_image_prompt.txt",
-        recipe_prompt_log=project_root / "assets_src" / "logs" / f"{name}_recipe_prompt.txt",
-        tripo_prompt_log=project_root / "assets_src" / "logs" / f"{name}_tripo_prompt.txt",
+        build_log=project_root / "assets_pipeline" / "logs" / f"{name}.log",
+        image_prompt_log=project_root / "assets_pipeline" / "logs" / f"{name}_image_prompt.txt",
+        recipe_prompt_log=project_root / "assets_pipeline" / "logs" / f"{name}_recipe_prompt.txt",
+        tripo_prompt_log=project_root / "assets_pipeline" / "logs" / f"{name}_tripo_prompt.txt",
     )
 
 
@@ -1564,7 +1564,7 @@ def build_asset(spec_path_or_name: str, options: BuildOptions, settings: Setting
 
 
 def build_all(options: BuildOptions, settings: Settings) -> None:
-    specs_dir = settings.project_root / "assets_src" / "specs"
+    specs_dir = settings.project_root / "assets_pipeline" / "inputs"
     spec_paths = sorted(p for p in specs_dir.glob("*.yaml") if p.is_file())
     if not spec_paths:
         raise RuntimeError(f"No YAML specs found in {specs_dir}")
@@ -1587,7 +1587,7 @@ def create_new_spec(name: str, desc: str, settings: Settings) -> Path:
     if not name.replace("_", "").replace("-", "").isalnum():
         raise ValueError("Spec name must be alphanumeric with optional '-' or '_' characters")
 
-    out_path = settings.project_root / "assets_src" / "specs" / f"{name}.yaml"
+    out_path = settings.project_root / "assets_pipeline" / "inputs" / f"{name}.yaml"
     if out_path.exists():
         raise FileExistsError(f"Spec already exists: {out_path}")
 

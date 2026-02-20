@@ -8,7 +8,7 @@ make smoke
 ```
 
 ## Typical Iteration
-1. Edit a spec in `assets_src/specs/`.
+1. Edit a spec in `assets_pipeline/inputs/`.
 2. Run offline first:
    - `make build NAME=<name> ARGS="--skip-openai --skip-images --force"`
 3. Run online if needed:
@@ -16,10 +16,10 @@ make smoke
 4. Inspect:
    - `assets/reports/<name>.json`
    - `assets/models/<name>.glb`
-   - `assets_src/blender/<name>.blend`
+   - `assets_pipeline/blender/<name>.blend`
 
 ## Debug Order
-1. Check build log: `assets_src/logs/<name>.log`
+1. Check build log: `assets_pipeline/logs/<name>.log`
 2. Check report status/reasons: `assets/reports/<name>.json`
 3. Re-run with `--force`.
 4. Re-run with `--strict` when validating CI quality gates.
