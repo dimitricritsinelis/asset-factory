@@ -1,22 +1,19 @@
 # SPEC_GUIDE.md
 
-## Minimal Spec
+## Where Specs Go
+- Active specs: `assets_pipeline/inputs/`
+- Example specs: `assets_pipeline/examples/`
+- Test specs: `assets_pipeline/tests/`
+
+## Minimal Active Spec
 ```yaml
-name: stylized_crate
-kind: prop
-description: Stylized wooden crate for FPS map dressing.
-style:
-  genre: stylized
-  keywords: [crate, wood, game-ready]
-scale_meters: 1.0
-tri_budget: 3000
+name: enemy_raider_01
+kind: character
+scale_meters: 1.78
+tri_budget: 25000
 texture:
   generate_basecolor: false
-  basecolor_size: 512
-colors:
-  primary: "#8C6B45"
-  secondary: "#4E3A28"
-seed: 1337
+  basecolor_size: 1024
 ```
 
 ## Character With Weapon Embed
@@ -45,9 +42,3 @@ loadout:
       scale: 1.0
     muzzle_socket_name: muzzle
 ```
-
-## Notes
-- `kind: character` defaults to Tripo provider unless overridden.
-- `kind: prop/environment` defaults to procedural unless overridden.
-- For weapons, set `runtime_output_path` or rely on default:
-  - `apps/client/public/assets/models/weapons/<name>/<name>.glb`

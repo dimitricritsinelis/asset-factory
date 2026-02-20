@@ -70,7 +70,17 @@ class WeaponBuildOutcome:
     reasons: list[str]
 
 
-def _artifact_paths(project_root: Path, name: str) -> ArtifactPaths:
+def _output_tier_for_spec_path(spec_path: Path, project_root: Path) -> Literal["production", "tests"]:
+    resolved = spec_path.resolve()
+    tests_dir = (project_root / "assets_pipeline" / "tests").resolve()
+    try:
+        resolved.relative_to(tests_dir)
+        return "tests"
+    except ValueError:
+        return "production"
+
+
+def _artifact_paths(project_root: Path, name: str, output_tier: Literal["production", "tests"]) -> ArtifactPaths:
     tripo_raw = project_root / "assets_pipeline" / "tripo_raw" / name
     return ArtifactPaths(
         ref_image=project_root / "assets_pipeline" / "refs" / f"{name}.png",
@@ -87,10 +97,10 @@ def _artifact_paths(project_root: Path, name: str) -> ArtifactPaths:
         tripo_render_png=tripo_raw / "rendered.png",
         tripo_animations_dir=tripo_raw / "animations",
         blend_file=project_root / "assets_pipeline" / "blender" / f"{name}.blend",
-        glb_file=project_root / "assets" / "models" / f"{name}.glb",
-        lod1_glb_file=project_root / "assets" / "models" / f"{name}_lod1.glb",
-        thumbnail_png=project_root / "assets" / "thumbnails" / f"{name}.png",
-        report_json=project_root / "assets" / "reports" / f"{name}.json",
+        glb_file=project_root / "assets" / "models" / output_tier / f"{name}.glb",
+        lod1_glb_file=project_root / "assets" / "models" / output_tier / f"{name}_lod1.glb",
+        thumbnail_png=project_root / "assets" / "thumbnails" / output_tier / f"{name}.png",
+        report_json=project_root / "assets" / "reports" / output_tier / f"{name}.json",
         build_log=project_root / "assets_pipeline" / "logs" / f"{name}.log",
         image_prompt_log=project_root / "assets_pipeline" / "logs" / f"{name}_image_prompt.txt",
         recipe_prompt_log=project_root / "assets_pipeline" / "logs" / f"{name}_recipe_prompt.txt",
@@ -840,7 +850,11 @@ def ensure_weapon_built(
     if weapon_spec.kind != "prop":
         raise RuntimeError(f"Weapon spec must be kind=prop, got {weapon_spec.kind} ({weapon_spec_path})")
 
-    paths = _artifact_paths(settings.project_root, weapon_spec.name)
+    paths = _artifact_paths(
+        settings.project_root,
+        weapon_spec.name,
+        _output_tier_for_spec_path(weapon_spec_path, settings.project_root),
+    )
     _ensure_parent_dirs(paths)
 
     runtime_path = runtime_override or _resolve_runtime_output(weapon_spec, settings.project_root, is_weapon=True)
@@ -1525,7 +1539,11 @@ def _build_with_tripo(
 def build_asset(spec_path_or_name: str, options: BuildOptions, settings: Settings) -> ArtifactPaths:
     spec_path = resolve_spec_path(spec_path_or_name, settings.project_root)
     spec = load_spec(spec_path)
-    paths = _artifact_paths(settings.project_root, spec.name)
+    paths = _artifact_paths(
+        settings.project_root,
+        spec.name,
+        _output_tier_for_spec_path(spec_path, settings.project_root),
+    )
     _ensure_parent_dirs(paths)
 
     provider = _resolve_provider(spec, options)

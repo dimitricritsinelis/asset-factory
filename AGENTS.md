@@ -10,8 +10,8 @@ Build reliable, reproducible 3D asset outputs from YAML specs with strict fallba
 - Do not remove offline mode.
 - Do not break `make smoke`.
 - `build` must always try to produce:
-  - `assets/models/<name>.glb`
-  - `assets/reports/<name>.json`
+  - `assets/models/*/<name>.glb`
+  - `assets/reports/*/<name>.json`
 - If generation degrades, report it explicitly in QC JSON.
 
 ## Providers
@@ -23,8 +23,11 @@ Build reliable, reproducible 3D asset outputs from YAML specs with strict fallba
 ## Command and Path Discipline
 - Use commands already present in `Makefile` when possible.
 - Do not invent path conventions; follow:
-  - Source specs: `assets_pipeline/inputs/*.yaml`
-  - Build outputs: `assets/models`, `assets/reports`, `assets/thumbnails`
+  - Active specs: `assets_pipeline/inputs/*.yaml`
+  - Test specs: `assets_pipeline/tests/*.yaml`
+  - Example specs: `assets_pipeline/examples/*.yaml`
+  - Production outputs: `assets/{models,reports,thumbnails}/production/`
+  - Test outputs: `assets/{models,reports,thumbnails}/tests/`
   - Runtime targets: `apps/client/public/assets/models/...` (when configured)
 
 ## Code Rules
@@ -37,7 +40,7 @@ Build reliable, reproducible 3D asset outputs from YAML specs with strict fallba
 1. `python -m py_compile asset_factory/*.py`
 2. `python -m asset_factory --help`
 3. `make smoke` (or explain why not run)
-4. Confirm README/docs updated for any behavior changes.
+4. Confirm README/docs updated for behavior changes.
 
 ## Safety
 - Never run destructive git commands.

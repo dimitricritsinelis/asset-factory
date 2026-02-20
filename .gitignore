@@ -8,9 +8,9 @@ __pycache__/
 .env
 
 # Generated assets
-assets/models/*.glb
-assets/thumbnails/*.png
-assets/reports/*.json
+assets/models/**/*.glb
+assets/thumbnails/**/*.png
+assets/reports/**/*.json
 assets_pipeline/refs/*.png
 assets_pipeline/recipes/*.json
 assets_pipeline/blender/*.blend

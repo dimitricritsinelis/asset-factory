@@ -1,20 +1,24 @@
 # openai-asset-factory
 
-YAML-first pipeline for generating game assets with:
-- OpenAI (reference images + structured planning)
-- Tripo3D (mesh generation)
-- Blender (deterministic normalize/export/QC)
+YAML-first pipeline for generating game assets with OpenAI + Tripo3D + Blender.
 
-## What This Tool Is
-- You edit YAML specs in `assets_pipeline/inputs/`.
-- The pipeline builds GLBs, thumbnails, reports, and Blender files.
-- Character builds can auto-build and embed a weapon from another spec.
-- Offline mode is supported and always falls back to procedural output.
+## Folder Intent
+- `asset_factory/`: pipeline code
+- `assets_pipeline/inputs/`: active YAML specs you want to build
+- `assets_pipeline/examples/`: example specs (not built by `build-all`)
+- `assets_pipeline/tests/`: test specs (used by smoke/offline checks)
+- `assets_pipeline/{refs,recipes,blender,logs,tripo_raw}`: intermediate artifacts
+- `assets/{models,reports,thumbnails}/production/`: production outputs
+- `assets/{models,reports,thumbnails}/tests/`: test outputs
+
+## Output Routing
+- Specs from `assets_pipeline/inputs/` write to `assets/*/production/`.
+- Specs from `assets_pipeline/tests/` write to `assets/*/tests/`.
 
 ## Requirements
 - Python 3.10+
 - Blender installed locally
-- Optional for online steps:
+- Optional online keys:
   - `OPENAI_API_KEY`
   - `TRIPO_API_KEY`
 
@@ -32,47 +36,50 @@ OPENAI_API_KEY=
 TRIPO_API_KEY=
 ```
 
-## Quick Start
+## Core Commands
 Offline smoke (no API calls):
 ```bash
 make smoke
 ```
 
-Build one asset:
+Build active character:
 ```bash
-make build NAME=stylized_crate
+make build NAME=enemy_raider_01
 ```
 
-Build character with Tripo:
+Build active weapon:
 ```bash
-make build NAME=enemy_raider_01 ARGS="--provider tripo --force"
+make build NAME=ak47
 ```
 
-Strict mode (fail non-zero if degraded):
-```bash
-make build NAME=enemy_raider_01 ARGS="--provider tripo --force --strict"
-```
-
-Build all specs:
+Build all active specs (`inputs/` only):
 ```bash
 make build-all
 ```
 
-## Asset Development Workflow
-1. Create/edit spec in `assets_pipeline/inputs/<name>.yaml`.
+Use Tripo explicitly:
+```bash
+make build NAME=enemy_raider_01 ARGS="--provider tripo --force"
+```
+
+Strict quality gate:
+```bash
+make build NAME=enemy_raider_01 ARGS="--provider tripo --force --strict"
+```
+
+## Spec Workflow
+1. Edit/create YAML in `assets_pipeline/inputs/`.
 2. Run offline first:
    - `make build NAME=<name> ARGS="--skip-openai --skip-images --force"`
-3. Run online (if desired):
+3. Run online if needed:
    - `make build NAME=<name> ARGS="--provider tripo --force"`
-4. Inspect outputs:
-   - `assets/models/<name>.glb`
-   - `assets/reports/<name>.json`
+4. Inspect:
+   - `assets/models/production/<name>.glb`
+   - `assets/reports/production/<name>.json`
    - `assets_pipeline/blender/<name>.blend`
-   - `assets/thumbnails/<name>.png`
-5. Iterate spec (tri budget, style keywords, scale, colors, loadout attach offsets).
 
-## Character + Weapon Embedding
-For character spec:
+## Character Weapon Embed
+In a character spec:
 ```yaml
 loadout:
   primary_weapon:
@@ -84,37 +91,17 @@ loadout:
     muzzle_socket_name: muzzle
 ```
 
-Weapon runtime default path:
-- `apps/client/public/assets/models/weapons/<weapon>/<weapon>.glb`
-
-Character runtime path can be set with:
-- `runtime_output_path: apps/client/public/assets/models/characters/<name>.glb`
-
-## Build Outputs
-For `<name>`:
-- `assets/models/<name>.glb`
-- `assets/models/<name>_lod1.glb` (character path)
-- `assets/reports/<name>.json`
-- `assets/thumbnails/<name>.png`
-- `assets_pipeline/blender/<name>.blend`
-- `assets_pipeline/logs/<name>.log`
-- `assets_pipeline/tripo_raw/<name>/...` (if Tripo used)
-
 ## Cleanup
-Remove temporary test artifacts:
 ```bash
 make clean-temp
 ```
 
 ## Troubleshooting
-- Missing API key:
-  - Set key in `.env`, or use `--skip-openai --skip-images`.
-- Blender not found:
-  - Set `BLENDER_BIN` to your Blender binary path.
-- Build degraded:
-  - Open `assets/reports/<name>.json` and read `status`, `reason/reasons`.
+- Missing keys: use `--skip-openai --skip-images` for offline fallback.
+- Blender not found: set `BLENDER_BIN` in `.env`.
+- Degraded result: inspect `assets/reports/*/<name>.json` (`status`, `reason/reasons`).
 
-## See Also
-- `AGENTS.md` (development guardrails)
-- `DEVELOPMENT.md` (dev loop and validation)
-- `SPEC_GUIDE.md` (spec schema and templates)
+## Docs
+- `AGENTS.md`
+- `DEVELOPMENT.md`
+- `SPEC_GUIDE.md`
