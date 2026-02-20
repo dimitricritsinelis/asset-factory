@@ -1,0 +1,9 @@
+openai>=2.0,<3
+python-dotenv>=1.0,<2
+PyYAML>=6.0,<7
+Pillow>=10.0,<12
+pydantic>=2.7,<3
+tripo3d>=0.1,<1
+boto3>=1.34,<2
+certifi>=2024.0.0
+aiohttp>=3.10,<4

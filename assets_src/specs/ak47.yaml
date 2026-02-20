@@ -1,0 +1,44 @@
+name: ak47
+kind: prop
+runtime_output_path: apps/client/public/assets/models/weapons/ak47/ak47.glb
+
+generator:
+  provider: tripo
+  tripo:
+    # For weapons, "image" or "multiview" tends to outperform text-only.
+    # Your pipeline will generate a clean weapon reference sheet with OpenAI,
+    # then pass the views into Tripo.
+    mode: multiview
+    rig: false
+
+description: >
+  AK-style rifle world model for a competitive FPS (CS:GO-like). No logos, flags,
+  readable text, serial numbers, or real-world markings. Game-ready PBR, clean silhouette.
+  Add a muzzle socket (empty) at the barrel tip for muzzle flash / bullet spawn.
+  Keep it a single rigid mesh (no deformation).
+
+style:
+  genre: "realistic-competitive-fps"
+  keywords:
+    - "AK-style rifle"
+    - "world model"
+    - "PBR"
+    - "no logos"
+    - "clean silhouette"
+    - "game-ready"
+
+# Interpreted as target overall length for weapons by the pipeline (see Codex prompt below).
+scale_meters: 0.87
+
+# LOD0-ish for a world weapon. You can later generate LOD1/LOD2.
+tri_budget: 12000
+
+texture:
+  generate_basecolor: false
+  basecolor_size: 1024
+
+colors:
+  primary: "#2A2A2A"   # gunmetal
+  secondary: "#5B3A1E" # wood-ish accent
+
+seed: 1337

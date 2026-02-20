@@ -1,0 +1,17 @@
+name: smoke_cube
+kind: prop
+description: Simple smoke-test cube to validate offline pipeline execution.
+style:
+  genre: test
+  keywords:
+    - minimal
+    - cube
+scale_meters: 1.0
+tri_budget: 128
+texture:
+  generate_basecolor: false
+  basecolor_size: 256
+colors:
+  primary: "#AAAAAA"
+  secondary: "#666666"
+seed: 1337

@@ -1,0 +1,18 @@
+name: stylized_crate
+kind: prop
+description: A stylized wooden crate with chunky proportions and slightly beveled edges.
+style:
+  genre: fantasy
+  keywords:
+    - stylized
+    - wooden
+    - crate
+scale_meters: 1.2
+tri_budget: 1600
+texture:
+  generate_basecolor: true
+  basecolor_size: 512
+colors:
+  primary: "#8B5A2B"
+  secondary: "#C9A227"
+seed: 1401

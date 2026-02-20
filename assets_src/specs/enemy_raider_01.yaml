@@ -1,0 +1,78 @@
+name: enemy_raider_01
+kind: character
+runtime_output_path: apps/client/public/assets/models/characters/enemy_raider_01.glb
+
+generator:
+  provider: tripo
+  tripo:
+    mode: multiview
+    rig: true
+    in_place: true
+    animations:
+      # Rifle locomotion (in-place)
+      - idle_rifle_in_place
+      - walk_rifle_in_place
+      - run_rifle_in_place
+      - strafe_left_rifle_in_place
+      - strafe_right_rifle_in_place
+
+      # Crouch set (in-place)
+      - crouch_idle_rifle
+      - crouch_walk_rifle_in_place
+
+      # Combat actions (ideally upper-body-only so they can layer over locomotion)
+      - shoot_rifle_upper
+      - reload_rifle_upper
+
+      # Death
+      - death
+
+# Enemy always has the AK; embed it into the exported enemy GLB as a rigid attachment.
+loadout:
+  primary_weapon:
+    spec: ak47
+    embed_in_character_glb: true
+    attach:
+      socket_bone_name: weapon_socket_r
+      bone_semantic: right_hand
+    muzzle_socket_name: muzzle
+
+description: >
+  Fictional hostile raider NPC for a sun-baked bazaar FPS. Competitive-shooter readability:
+  believable proportions, clean silhouette, hood + face covering, improvised tactical vest
+  with straps/pouches, cargo pants, boots, gloves, small backpack. Neutral A-pose base.
+  Enemy uses an AK-style rifle (embedded weapon mesh attached to a right-hand socket),
+  and must support: rifle locomotion, crouch, shoot, reload, and death.
+  No logos, flags, readable text, or real-world insignia/symbols. Prefer opaque materials
+  (no transparency cutouts).
+
+style:
+  genre: "realistic-competitive-fps"
+  keywords:
+    - "competitive shooter"
+    - "csgo-like readability"
+    - "game-ready"
+    - "PBR"
+    - "hooded mask"
+    - "tactical vest pouches straps"
+    - "cargo pants"
+    - "boots gloves"
+    - "sun-baked bazaar dust"
+    - "rifle equipped"
+    - "opaque materials"
+
+scale_meters: 1.78
+
+# LOD0-ish target to reduce faceting and improve silhouette.
+tri_budget: 25000
+
+# Tripo should provide textures; keep fields for compatibility.
+texture:
+  generate_basecolor: false
+  basecolor_size: 1024
+
+colors:
+  primary: "#C2A97A"
+  secondary: "#3F4A38"
+
+seed: 1337

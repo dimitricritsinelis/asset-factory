@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Env
+.env
+
+# Generated assets
+assets/models/*.glb
+assets/thumbnails/*.png
+assets/reports/*.json
+assets_src/refs/*.png
+assets_src/recipes/*.json
+assets_src/blender/*.blend
+assets_src/tripo_raw/
+assets_src/logs/*.log
+assets_src/logs/*_prompt.txt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+assets_src/logs/*.txt
+*.blend1
