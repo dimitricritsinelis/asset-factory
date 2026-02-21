@@ -28,6 +28,12 @@ class TripoAnimationResult:
     error: str | None
 
 
+@dataclass(frozen=True)
+class TripoClipRequest:
+    output_clip_name: str
+    preset_name: str
+
+
 def _require_tripo_key(settings: Settings) -> str:
     if not settings.tripo_api_key:
         raise RuntimeError(
@@ -385,44 +391,18 @@ def _multiview_candidates(image_inputs: list[str]) -> list[tuple[str, list[str]]
     return deduped
 
 
-def _normalize_clip_name(raw: str) -> str:
+def _normalize_output_clip_name(raw: str) -> str:
     clip = raw.strip().lower().replace(" ", "_")
-    aliases = {
-        "idle": "idle",
-        "walk": "walk",
-        "run": "run",
-        "shoot": "shoot",
-        "turn": "turn",
-        "jump": "jump",
-        "hurt": "hurt",
-        "fall": "fall",
-        "dive": "dive",
-        "climb": "climb",
-        "slash": "slash",
-    }
-    if clip in aliases:
-        return aliases[clip]
     if clip.startswith("preset:"):
-        return clip.split("preset:", 1)[1].replace(":", "_")
+        clip = clip.split("preset:", 1)[1].replace(":", "_")
     return clip
 
 
-def _clip_animation_arg(raw: str) -> str:
+def _normalize_preset_name(raw: str) -> str:
     clip = raw.strip().lower().replace(" ", "_")
     if clip.startswith("preset:"):
-        return clip
-    if clip.endswith("_in_place"):
-        clip = clip[: -len("_in_place")]
-    aliases = {
-        "walk_cycle": "walk",
-        "run_cycle": "run",
-        "idle_loop": "idle",
-        "death": "fall",
-        "strafe_left": "walk",
-        "strafe_right": "walk",
-    }
-    clip = aliases.get(clip, clip)
-    return f"preset:{clip.replace(' ', '_')}"
+        clip = clip.split("preset:", 1)[1].replace(":", "_")
+    return clip
 
 
 def generate_model_from_text(
@@ -543,7 +523,8 @@ def generate_model_from_images(
 def generate_animation_clips(
     *,
     source_task_payload: dict[str, Any],
-    clip_names: list[str],
+    clip_requests: list[TripoClipRequest] | None = None,
+    clip_names: list[str] | None = None,
     in_place: bool,
     out_dir: Path,
     settings: Settings,
@@ -552,8 +533,33 @@ def generate_animation_clips(
     if not isinstance(task_id, str) or not task_id:
         raise RuntimeError("Cannot generate animations: source task payload does not include task_id")
 
-    normalized = [_normalize_clip_name(c) for c in clip_names if c and c.strip()]
-    if not normalized:
+    requests: list[TripoClipRequest] = []
+    if clip_requests:
+        for req in clip_requests:
+            output_name = _normalize_output_clip_name(req.output_clip_name)
+            preset_name = _normalize_preset_name(req.preset_name)
+            if not output_name or not preset_name:
+                continue
+            requests.append(TripoClipRequest(output_clip_name=output_name, preset_name=preset_name))
+    elif clip_names:
+        for clip in clip_names:
+            if not clip or not clip.strip():
+                continue
+            normalized = _normalize_output_clip_name(clip)
+            if not normalized:
+                continue
+            requests.append(TripoClipRequest(output_clip_name=normalized, preset_name=normalized))
+
+    deduped_requests: list[TripoClipRequest] = []
+    seen_outputs: set[str] = set()
+    for req in requests:
+        key = req.output_clip_name.lower()
+        if key in seen_outputs:
+            continue
+        seen_outputs.add(key)
+        deduped_requests.append(req)
+
+    if not deduped_requests:
         return []
 
     async def _run() -> list[TripoAnimationResult]:
@@ -562,9 +568,10 @@ def generate_animation_clips(
         try:
             anim_dir = out_dir / "animations"
             anim_dir.mkdir(parents=True, exist_ok=True)
-            for clip in normalized:
+            for req in deduped_requests:
+                clip = req.output_clip_name
                 try:
-                    animation_arg = _clip_animation_arg(clip)
+                    animation_arg = f"preset:{req.preset_name}"
                     retarget_task_id = await _await_maybe(
                         client.retarget_animation(
                             original_model_task_id=task_id,

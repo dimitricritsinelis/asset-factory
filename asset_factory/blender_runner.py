@@ -43,6 +43,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--primary_color", type=str, required=False, default="#A8A8A8")
     parser.add_argument("--secondary_color", type=str, required=False, default="#4F5A4D")
     parser.add_argument("--anim_model", action="append", default=[], help="Additional animation source GLB")
+    parser.add_argument("--requested_clip", action="append", default=[], help="Requested output clip names")
     parser.add_argument("--character", action="store_true", help="Enable character-safe material defaults")
     parser.add_argument("--weapon_model", type=str, required=False, help="Weapon GLB to embed into character")
     parser.add_argument("--weapon_socket_bone_name", type=str, default="weapon_socket_r")
@@ -431,6 +432,18 @@ def _import_and_attach_animation_clips(
     return clip_names, errors
 
 
+def _missing_requested_clips(requested_clips: list[str], exported_clips: list[str]) -> list[str]:
+    if not requested_clips:
+        return []
+    exported_keys = {name.strip().lower() for name in exported_clips if name and name.strip()}
+    missing: list[str] = []
+    for name in requested_clips:
+        key = name.strip().lower()
+        if key and key not in exported_keys:
+            missing.append(name)
+    return missing
+
+
 def _run_procedural(args: argparse.Namespace, OPS) -> dict:
     recipe_path = Path(args.recipe)
     recipe = json.loads(recipe_path.read_text(encoding="utf-8"))
@@ -686,6 +699,8 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     objects_before = len(imported)
     armature = OPS.pick_primary_armature(imported)
     rig_exists = armature is not None
+    armature_transform_applied = False
+    requested_clip_names = [c.strip() for c in list(args.requested_clip or []) if isinstance(c, str) and c.strip()]
 
     exportable_meshes = OPS.collect_exportable_meshes(imported, armature)
     if not exportable_meshes:
@@ -723,6 +738,10 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     if not exportable_meshes:
         raise RuntimeError("All exportable meshes were removed during cleanup")
 
+    transform_group: list[bpy.types.Object] = list(exportable_meshes)
+    if armature is not None and armature.name in bpy.data.objects:
+        transform_group.append(armature)
+
     t_anim = time.perf_counter()
     clip_names, clip_errors = _import_and_attach_animation_clips(
         base_armature=armature,
@@ -732,7 +751,8 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     reasons.extend(clip_errors)
 
     t_apply = time.perf_counter()
-    OPS.apply_object_transforms(exportable_meshes)
+    OPS.apply_object_transforms(transform_group)
+    armature_transform_applied = armature is not None and armature.name in bpy.data.objects
     timings["apply_transforms_s"] = time.perf_counter() - t_apply
 
     t_normals = time.perf_counter()
@@ -760,11 +780,18 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     timings["pack_images_s"] = time.perf_counter() - t_pack
 
     t_scale = time.perf_counter()
-    applied_scale_factor = OPS.scale_objects_to_height(exportable_meshes, float(args.target_height_m))
+    applied_scale_factor = OPS.scale_group_to_height(
+        measure_objects=exportable_meshes,
+        transform_objects=transform_group,
+        target_height=float(args.target_height_m),
+    )
     timings["scale_to_height_s"] = time.perf_counter() - t_scale
 
     t_ground = time.perf_counter()
-    OPS.move_objects_to_ground_center(exportable_meshes)
+    ground_center_delta = OPS.move_group_to_ground_center(
+        measure_objects=exportable_meshes,
+        transform_objects=transform_group,
+    )
     timings["ground_origin_s"] = time.perf_counter() - t_ground
 
     t_tri = time.perf_counter()
@@ -834,6 +861,9 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     timings["save_blend_s"] = _save_blend(Path(args.blend))
 
     mins, maxs = OPS.bounds_min_max(render_objects)
+    missing_clips = _missing_requested_clips(requested_clip_names, clip_names)
+    if missing_clips:
+        reasons.append("missing requested clips: " + ", ".join(missing_clips))
     report = {
         "asset_name": input_model.stem,
         "mode": "normalize",
@@ -858,14 +888,18 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         "alpha_fixed": mat_stats["alpha_fixed"],
         "backface_culling_disabled": mat_stats["backface_culling_disabled"],
         "rig_present": rig_exists,
+        "armature_transform_applied": armature_transform_applied,
         "animations_present": OPS.animations_present() or bool(clip_names),
+        "requested_clips": requested_clip_names,
         "clip_names": clip_names,
+        "missing_clips": missing_clips,
         "clip_count": len(clip_names),
         "clip_errors": clip_errors,
         "removed_objects": removed_objects,
         "removed_loose_parts": removed_loose_parts,
         "exported_object_names": exported_object_names,
         "scale_factor_applied": applied_scale_factor,
+        "ground_center_delta": [ground_center_delta[0], ground_center_delta[1], ground_center_delta[2]],
         "weapon_path": args.weapon_model or "",
         "weapon_built": bool(args.weapon_model and Path(args.weapon_model).exists()),
         "weapon_embedded": weapon_embedded,

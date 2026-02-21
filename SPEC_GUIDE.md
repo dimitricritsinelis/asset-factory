@@ -28,6 +28,14 @@ generator:
     mode: multiview
     rig: true
     animations: [idle, walk, run]
+    animation_presets:
+      idle_rifle_in_place: idle
+      walk_rifle_in_place: walk
+      run_rifle_in_place: run
+      crouch_idle_rifle: idle
+      crouch_walk_rifle_in_place: walk
+      shoot_rifle_upper: shoot
+      death: fall
     in_place: true
 
 loadout:
@@ -42,3 +50,8 @@ loadout:
       scale: 1.0
     muzzle_socket_name: muzzle
 ```
+
+## Animation Mapping
+- `generator.tripo.animations` lists desired output clip names.
+- `generator.tripo.animation_presets` maps output clip names to Tripo preset names.
+- The exporter preserves output clip names in the final GLB, while Tripo is called with mapped preset names.

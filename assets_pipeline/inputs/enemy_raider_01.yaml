@@ -8,6 +8,17 @@ generator:
     mode: multiview
     rig: true
     in_place: true
+    animation_presets:
+      idle_rifle_in_place: idle
+      walk_rifle_in_place: walk
+      run_rifle_in_place: run
+      strafe_left_rifle_in_place: walk
+      strafe_right_rifle_in_place: walk
+      crouch_idle_rifle: idle
+      crouch_walk_rifle_in_place: walk
+      shoot_rifle_upper: shoot
+      reload_rifle_upper: shoot
+      death: fall
     animations:
       # Rifle locomotion (in-place)
       - idle_rifle_in_place

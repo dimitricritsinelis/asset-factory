@@ -36,6 +36,7 @@ class TripoGeneratorSpec(BaseModel):
     pbr: bool = True
     texture: bool = True
     animations: list[str] = Field(default_factory=list)
+    animation_presets: dict[str, str] = Field(default_factory=dict)
     in_place: bool = True
 
 

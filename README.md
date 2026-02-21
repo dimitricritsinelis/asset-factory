@@ -91,6 +91,22 @@ loadout:
     muzzle_socket_name: muzzle
 ```
 
+## Animation Preset Mapping
+For character Tripo retargeting, map desired output clip names to explicit Tripo presets:
+```yaml
+generator:
+  tripo:
+    animations:
+      - idle_rifle_in_place
+      - crouch_walk_rifle_in_place
+      - death
+    animation_presets:
+      idle_rifle_in_place: idle
+      crouch_walk_rifle_in_place: walk
+      death: fall
+```
+Reports include `requested_clips`, `clip_names`, and `missing_clips`.
+
 ## Cleanup
 ```bash
 make clean-temp

@@ -70,6 +70,12 @@ class WeaponBuildOutcome:
     reasons: list[str]
 
 
+@dataclass(frozen=True)
+class AnimationClipRequest:
+    output_clip_name: str
+    tripo_preset_name: str
+
+
 def _output_tier_for_spec_path(spec_path: Path, project_root: Path) -> Literal["production", "tests"]:
     resolved = spec_path.resolve()
     tests_dir = (project_root / "assets_pipeline" / "tests").resolve()
@@ -386,6 +392,7 @@ def _run_blender_normalize(
     weapon_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
     weapon_rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
     weapon_scale: float = 1.0,
+    requested_clip_names: list[str] | None = None,
 ) -> int:
     cmd = [
         settings.blender_bin,
@@ -426,6 +433,8 @@ def _run_blender_normalize(
         cmd.append("--character")
     for anim_model in animation_models or []:
         cmd.extend(["--anim_model", str(anim_model)])
+    for clip_name in requested_clip_names or []:
+        cmd.extend(["--requested_clip", clip_name])
     if weapon_model is not None:
         cmd.extend(
             [
@@ -504,10 +513,15 @@ def _default_character_clips() -> list[str]:
     return ["idle", "walk", "run"]
 
 
-def _canonical_requested_clip(raw: str) -> str:
+def _normalize_output_clip_name(raw: str) -> str:
     clip = raw.strip().lower().replace(" ", "_")
     if clip.startswith("preset:"):
         clip = clip.split("preset:", 1)[1].replace(":", "_")
+    return clip
+
+
+def _canonical_tripo_preset_name(raw: str) -> str:
+    clip = _normalize_output_clip_name(raw)
     if clip.endswith("_in_place"):
         clip = clip[: -len("_in_place")]
     aliases = {
@@ -517,24 +531,65 @@ def _canonical_requested_clip(raw: str) -> str:
         "death": "fall",
         "strafe_left": "walk",
         "strafe_right": "walk",
+        "idle_rifle": "idle",
+        "walk_rifle": "walk",
+        "run_rifle": "run",
+        "strafe_left_rifle": "walk",
+        "strafe_right_rifle": "walk",
+        "crouch_idle_rifle": "idle",
+        "crouch_walk_rifle": "walk",
+        "shoot_rifle_upper": "shoot",
+        "reload_rifle_upper": "shoot",
     }
     return aliases.get(clip, clip)
 
 
-def _requested_animation_clips(spec: AssetSpec) -> list[str]:
+def _requested_animation_clip_requests(spec: AssetSpec) -> list[AnimationClipRequest]:
     if spec.kind != "character":
         return []
-    clips = [_canonical_requested_clip(c) for c in spec.resolved_tripo().animations if c and c.strip()]
-    merged = _default_character_clips() + clips
-    out: list[str] = []
+    tripo_cfg = spec.resolved_tripo()
+    normalized_presets = {
+        _normalize_output_clip_name(str(name)): _canonical_tripo_preset_name(str(preset))
+        for name, preset in tripo_cfg.animation_presets.items()
+        if name and str(name).strip() and preset and str(preset).strip()
+    }
+    merged = _default_character_clips() + [str(c) for c in tripo_cfg.animations if c and str(c).strip()]
+    out: list[AnimationClipRequest] = []
     seen: set[str] = set()
-    for clip in merged:
-        key = clip.lower()
+    for raw_clip in merged:
+        output_name = _normalize_output_clip_name(raw_clip)
+        key = output_name.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(clip)
+        preset_name = normalized_presets.get(output_name, _canonical_tripo_preset_name(raw_clip))
+        out.append(AnimationClipRequest(output_clip_name=output_name, tripo_preset_name=preset_name))
+
+    for output_name, preset_name in normalized_presets.items():
+        key = output_name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(AnimationClipRequest(output_clip_name=output_name, tripo_preset_name=preset_name))
     return out
+
+
+def _requested_animation_clips(spec: AssetSpec) -> list[str]:
+    return [r.output_clip_name for r in _requested_animation_clip_requests(spec)]
+
+
+def _missing_clip_names(requested: list[str], exported: list[str]) -> list[str]:
+    if not requested:
+        return []
+    exported_keys = {clip.strip().lower() for clip in exported if isinstance(clip, str) and clip.strip()}
+    missing: list[str] = []
+    for clip in requested:
+        key = clip.strip().lower()
+        if not key:
+            continue
+        if key not in exported_keys:
+            missing.append(clip)
+    return missing
 
 
 def _load_report(report_path: Path) -> dict:
@@ -1161,7 +1216,12 @@ def _build_with_tripo(
     settings: Settings,
     paths: ArtifactPaths,
 ) -> ArtifactPaths:
-    from .tripo_io import generate_animation_clips, generate_model_from_images, generate_model_from_text
+    from .tripo_io import (
+        TripoClipRequest,
+        generate_animation_clips,
+        generate_model_from_images,
+        generate_model_from_text,
+    )
 
     degraded_reasons: list[str] = []
     weapon_cfg: PrimaryWeaponSpec | None = spec.primary_weapon() if spec.kind == "character" else None
@@ -1210,6 +1270,8 @@ def _build_with_tripo(
     tripo_cfg = spec.resolved_tripo()
     preferred_mode = tripo_cfg.mode
     requested_rig = _resolve_rig(spec, options)
+    requested_clip_requests = _requested_animation_clip_requests(spec)
+    requested_clips = [r.output_clip_name for r in requested_clip_requests]
 
     quality_preset = _effective_quality_preset(spec, settings)
     if spec.kind == "character" and quality_preset == "csgo":
@@ -1265,7 +1327,8 @@ def _build_with_tripo(
         "model_version": settings.tripo_model_version,
         "texture_quality": settings.tripo_texture_quality,
         "rig": requested_rig,
-        "animations": _requested_animation_clips(spec),
+        "animations": requested_clips,
+        "animation_presets": {r.output_clip_name: r.tripo_preset_name for r in requested_clip_requests},
         "in_place": tripo_cfg.in_place,
     }
     _save_recipe(paths.recipe_json, build_json)
@@ -1338,14 +1401,19 @@ def _build_with_tripo(
             reasons=degraded_reasons,
         )
 
-    requested_clips = _requested_animation_clips(spec)
     if requested_clips:
         if not source_task_payload:
             source_task_payload = _load_json(paths.tripo_task_json)
         try:
             clip_results = generate_animation_clips(
                 source_task_payload=source_task_payload,
-                clip_names=requested_clips,
+                clip_requests=[
+                    TripoClipRequest(
+                        output_clip_name=req.output_clip_name,
+                        preset_name=req.tripo_preset_name,
+                    )
+                    for req in requested_clip_requests
+                ],
                 in_place=tripo_cfg.in_place,
                 out_dir=paths.tripo_raw_dir,
                 settings=settings,
@@ -1392,6 +1460,22 @@ def _build_with_tripo(
     if not _needs_blender_run(paths, options.force, require_lod1=require_lod1):
         print(f"[build:{spec.name}] outputs already exist; skipping Blender normalize")
         _sync_runtime_output_for_spec(spec, paths, settings)
+        existing_report = _load_report(paths.report_json)
+        exported_clip_names = existing_report.get("clip_names")
+        if not isinstance(exported_clip_names, list):
+            exported_clip_names = []
+        missing_clips = _missing_clip_names(requested_clips, exported_clip_names)
+        if missing_clips:
+            degraded_reasons.append(
+                "missing requested clip names in export: " + ", ".join(missing_clips)
+            )
+        _update_report_fields(
+            paths.report_json,
+            {
+                "requested_clips": requested_clips,
+                "missing_clips": missing_clips,
+            },
+        )
         if weapon_cfg is not None:
             _update_report_fields(
                 paths.report_json,
@@ -1452,6 +1536,7 @@ def _build_with_tripo(
             weapon_offset_m=weapon_offset,
             weapon_rotation_deg=weapon_rot,
             weapon_scale=weapon_scale,
+            requested_clip_names=requested_clips,
         )
         if rc != 0:
             degraded_reasons.append(f"Blender normalize attempt {attempt} failed (rc={rc})")
@@ -1474,6 +1559,21 @@ def _build_with_tripo(
                 )
             if clip_count <= 0:
                 degraded_reasons.append("export contains no animation clips")
+        exported_clip_names = report.get("clip_names")
+        if not isinstance(exported_clip_names, list):
+            exported_clip_names = []
+        missing_clips = _missing_clip_names(requested_clips, exported_clip_names)
+        if missing_clips:
+            degraded_reasons.append(
+                "missing requested clip names in export: " + ", ".join(missing_clips)
+            )
+        _update_report_fields(
+            paths.report_json,
+            {
+                "requested_clips": requested_clips,
+                "missing_clips": missing_clips,
+            },
+        )
         if normalize_mode == "character":
             qc_issues = _normalize_qc_issues(report, spec, lod0_target=lod0_target, lod1_target=lod1_target)
         elif normalize_mode == "weapon":

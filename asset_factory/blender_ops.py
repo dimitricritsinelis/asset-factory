@@ -516,16 +516,60 @@ def model_height(objects: list[bpy.types.Object]) -> float:
     return max(0.0, bounds_dimensions(objects).z)
 
 
-def scale_objects_to_height(objects: list[bpy.types.Object], target_height: float) -> float:
-    if not objects:
+def _valid_unique_objects(objects: list[bpy.types.Object]) -> list[bpy.types.Object]:
+    out: list[bpy.types.Object] = []
+    seen: set[str] = set()
+    for obj in objects:
+        if obj is None or obj.name in seen or obj.name not in bpy.data.objects:
+            continue
+        seen.add(obj.name)
+        out.append(obj)
+    return out
+
+
+def apply_uniform_scale(objects: list[bpy.types.Object], scale_factor: float, *, apply_transforms: bool) -> None:
+    valid = _valid_unique_objects(objects)
+    if not valid:
+        return
+    for obj in valid:
+        obj.scale = obj.scale * float(scale_factor)
+    if apply_transforms:
+        apply_object_transforms(valid)
+
+
+def translate_objects(
+    objects: list[bpy.types.Object],
+    delta_xyz: tuple[float, float, float],
+    *,
+    apply_transforms: bool,
+) -> None:
+    valid = _valid_unique_objects(objects)
+    if not valid:
+        return
+    dx, dy, dz = float(delta_xyz[0]), float(delta_xyz[1]), float(delta_xyz[2])
+    for obj in valid:
+        obj.location.x += dx
+        obj.location.y += dy
+        obj.location.z += dz
+    if apply_transforms:
+        apply_object_transforms(valid)
+
+
+def scale_group_to_height(
+    *,
+    measure_objects: list[bpy.types.Object],
+    transform_objects: list[bpy.types.Object],
+    target_height: float,
+) -> float:
+    measure = _valid_unique_objects(measure_objects)
+    transforms = _valid_unique_objects(transform_objects)
+    if not measure or not transforms:
         return 1.0
-    current_h = model_height(objects)
+    current_h = model_height(measure)
     if current_h <= 1e-6:
         return 1.0
     scale_factor = target_height / current_h
-    for obj in objects:
-        obj.scale = obj.scale * scale_factor
-    apply_object_transforms(objects)
+    apply_uniform_scale(transforms, scale_factor, apply_transforms=True)
     return scale_factor
 
 
@@ -543,18 +587,42 @@ def scale_objects_to_max_dimension(objects: list[bpy.types.Object], target_size:
     return scale_factor
 
 
-def move_objects_to_ground_center(objects: list[bpy.types.Object]) -> None:
-    if not objects:
-        return
-    mins, maxs = bounds_min_max(objects)
+def move_group_to_ground_center(
+    *,
+    measure_objects: list[bpy.types.Object],
+    transform_objects: list[bpy.types.Object],
+) -> tuple[float, float, float]:
+    measure = _valid_unique_objects(measure_objects)
+    transforms = _valid_unique_objects(transform_objects)
+    if not measure or not transforms:
+        return (0.0, 0.0, 0.0)
+    mins, maxs = bounds_min_max(measure)
     cx = (mins.x + maxs.x) * 0.5
     cy = (mins.y + maxs.y) * 0.5
     dz = -mins.z
-    for obj in objects:
-        obj.location.x -= cx
-        obj.location.y -= cy
-        obj.location.z += dz
-    apply_object_transforms(objects)
+    translate_objects(
+        transforms,
+        delta_xyz=(-cx, -cy, dz),
+        apply_transforms=True,
+    )
+    return (-cx, -cy, dz)
+
+
+def scale_objects_to_height(objects: list[bpy.types.Object], target_height: float) -> float:
+    return scale_group_to_height(
+        measure_objects=objects,
+        transform_objects=objects,
+        target_height=target_height,
+    )
+
+
+def move_objects_to_ground_center(objects: list[bpy.types.Object]) -> None:
+    if not objects:
+        return
+    move_group_to_ground_center(
+        measure_objects=objects,
+        transform_objects=objects,
+    )
 
 
 def count_textures() -> int:
