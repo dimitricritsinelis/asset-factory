@@ -40,6 +40,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail with non-zero exit if build completes in degraded mode",
     )
+    build_cmd.add_argument(
+        "--allow-degraded-character",
+        action="store_true",
+        help="Allow degraded character output even when character_qc_enforced=true",
+    )
     build_cmd.set_defaults(handler=_handle_build)
 
     build_all_cmd = subparsers.add_parser("build-all", help="Build all specs in assets_pipeline/inputs")
@@ -66,6 +71,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail with non-zero exit if any build completes in degraded mode",
     )
+    build_all_cmd.add_argument(
+        "--allow-degraded-character",
+        action="store_true",
+        help="Allow degraded character output even when character_qc_enforced=true",
+    )
     build_all_cmd.set_defaults(handler=_handle_build_all)
 
     new_cmd = subparsers.add_parser("new", help="Create a new YAML spec from natural language")
@@ -89,6 +99,7 @@ def _handle_build(args: argparse.Namespace) -> int:
         rig_override=args.rig_override,
         dry_run=args.dry_run,
         strict=args.strict,
+        allow_degraded_character=args.allow_degraded_character,
     )
     paths = build_asset(args.spec_path_or_name, options, settings)
 
@@ -111,6 +122,7 @@ def _handle_build_all(args: argparse.Namespace) -> int:
         rig_override=args.rig_override,
         dry_run=args.dry_run,
         strict=args.strict,
+        allow_degraded_character=args.allow_degraded_character,
     )
     build_all(options, settings)
     print("Build-all complete")

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Iterable, Literal
+from typing import Any, Iterable, Literal
 
 from .config import Settings
 from .prompts import (
@@ -32,6 +32,7 @@ class BuildOptions:
     rig_override: bool | None = None
     dry_run: bool = False
     strict: bool = False
+    allow_degraded_character: bool = False
 
 
 @dataclass(frozen=True)
@@ -385,6 +386,11 @@ def _run_blender_normalize(
     secondary_color: str,
     mode: Literal["generic", "character", "weapon"],
     animation_models: list[Path] | None = None,
+    animation_clips: list[tuple[str, Path]] | None = None,
+    retarget_map_path: Path | None = None,
+    canonical_pose: Literal["T", "none"] = "T",
+    aggressive_character_fix: bool = False,
+    character_qc_enforced: bool = False,
     weapon_model: Path | None = None,
     weapon_socket_bone_name: str = "weapon_socket_r",
     weapon_bone_semantic: str = "right_hand",
@@ -392,7 +398,17 @@ def _run_blender_normalize(
     weapon_offset_m: tuple[float, float, float] = (0.0, 0.0, 0.0),
     weapon_rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
     weapon_scale: float = 1.0,
+    grip_right_offset_m: tuple[float, float, float] | None = None,
+    grip_left_offset_m: tuple[float, float, float] | None = None,
+    sight_offset_m: tuple[float, float, float] | None = None,
+    ads_enabled: bool = False,
+    ads_clip_names: list[str] | None = None,
+    ads_aim_distance_m: float = 12.0,
+    ads_eye_offset_m: tuple[float, float, float] | None = None,
+    ads_head_bone: str | None = None,
+    ads_spine_bones: list[str] | None = None,
     requested_clip_names: list[str] | None = None,
+    in_place: bool = False,
 ) -> int:
     cmd = [
         settings.blender_bin,
@@ -426,6 +442,8 @@ def _run_blender_normalize(
         str(paths.report_json),
         "--log",
         str(paths.build_log),
+        "--canonical_pose",
+        canonical_pose,
     ]
     if target_length_m is not None:
         cmd.extend(["--target_length_m", str(target_length_m)])
@@ -433,8 +451,18 @@ def _run_blender_normalize(
         cmd.append("--character")
     for anim_model in animation_models or []:
         cmd.extend(["--anim_model", str(anim_model)])
+    for output_name, anim_path in animation_clips or []:
+        cmd.extend(["--anim_clip", f"{output_name}={anim_path}"])
+    if retarget_map_path is not None:
+        cmd.extend(["--retarget_map", str(retarget_map_path)])
     for clip_name in requested_clip_names or []:
         cmd.extend(["--requested_clip", clip_name])
+    if in_place:
+        cmd.append("--in_place")
+    if aggressive_character_fix:
+        cmd.append("--aggressive_character_fix")
+    if character_qc_enforced:
+        cmd.append("--character_qc_enforced")
     if weapon_model is not None:
         cmd.extend(
             [
@@ -454,6 +482,26 @@ def _run_blender_normalize(
                 str(weapon_scale),
             ]
         )
+        if grip_right_offset_m is not None:
+            cmd.append(
+                "--grip_right_offset_m="
+                + f"{grip_right_offset_m[0]},{grip_right_offset_m[1]},{grip_right_offset_m[2]}"
+            )
+        if grip_left_offset_m is not None:
+            cmd.append("--grip_left_offset_m=" + f"{grip_left_offset_m[0]},{grip_left_offset_m[1]},{grip_left_offset_m[2]}")
+        if sight_offset_m is not None:
+            cmd.append("--sight_offset_m=" + f"{sight_offset_m[0]},{sight_offset_m[1]},{sight_offset_m[2]}")
+        if ads_enabled:
+            cmd.append("--ads_enabled")
+            for clip_name in ads_clip_names or []:
+                cmd.extend(["--ads_clip", clip_name])
+            cmd.extend(["--ads_aim_distance_m", str(float(ads_aim_distance_m))])
+            if ads_eye_offset_m is not None:
+                cmd.append("--ads_eye_offset_m=" + f"{ads_eye_offset_m[0]},{ads_eye_offset_m[1]},{ads_eye_offset_m[2]}")
+            if ads_head_bone:
+                cmd.extend(["--ads_head_bone", ads_head_bone])
+            for bone_name in ads_spine_bones or []:
+                cmd.extend(["--ads_spine_bone", bone_name])
 
     with paths.build_log.open("w", encoding="utf-8") as handle:
         try:
@@ -553,23 +601,37 @@ def _requested_animation_clip_requests(spec: AssetSpec) -> list[AnimationClipReq
         for name, preset in tripo_cfg.animation_presets.items()
         if name and str(name).strip() and preset and str(preset).strip()
     }
-    merged = _default_character_clips() + [str(c) for c in tripo_cfg.animations if c and str(c).strip()]
-    out: list[AnimationClipRequest] = []
-    seen: set[str] = set()
-    for raw_clip in merged:
+
+    explicit_requested: list[str] = []
+    explicit_seen: set[str] = set()
+    for raw_clip in [str(c) for c in tripo_cfg.animations if c and str(c).strip()]:
         output_name = _normalize_output_clip_name(raw_clip)
         key = output_name.lower()
-        if key in seen:
+        if key in explicit_seen:
             continue
-        seen.add(key)
-        preset_name = normalized_presets.get(output_name, _canonical_tripo_preset_name(raw_clip))
-        out.append(AnimationClipRequest(output_clip_name=output_name, tripo_preset_name=preset_name))
+        explicit_seen.add(key)
+        explicit_requested.append(output_name)
 
-    for output_name, preset_name in normalized_presets.items():
+    for raw_name in tripo_cfg.animation_presets.keys():
+        if not raw_name or not str(raw_name).strip():
+            continue
+        output_name = _normalize_output_clip_name(str(raw_name))
+        key = output_name.lower()
+        if key in explicit_seen:
+            continue
+        explicit_seen.add(key)
+        explicit_requested.append(output_name)
+
+    merged = explicit_requested if explicit_requested else _default_character_clips()
+
+    out: list[AnimationClipRequest] = []
+    seen: set[str] = set()
+    for output_name in merged:
         key = output_name.lower()
         if key in seen:
             continue
         seen.add(key)
+        preset_name = normalized_presets.get(output_name, _canonical_tripo_preset_name(output_name))
         out.append(AnimationClipRequest(output_clip_name=output_name, tripo_preset_name=preset_name))
     return out
 
@@ -590,6 +652,31 @@ def _missing_clip_names(requested: list[str], exported: list[str]) -> list[str]:
         if key not in exported_keys:
             missing.append(clip)
     return missing
+
+
+def _is_locomotion_clip_name(name: str) -> bool:
+    clip = name.strip().lower()
+    return any(token in clip for token in ("idle", "walk", "run", "strafe"))
+
+
+def _is_rifle_locomotion_clip_name(name: str) -> bool:
+    clip = name.strip().lower()
+    if "rifle" not in clip:
+        return False
+    return _is_locomotion_clip_name(clip)
+
+
+def _default_ads_clip_names(requested_clips: list[str]) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for clip_name in requested_clips:
+        key = clip_name.strip().lower()
+        if not key or key in seen:
+            continue
+        if _is_rifle_locomotion_clip_name(clip_name):
+            seen.add(key)
+            resolved.append(clip_name)
+    return resolved
 
 
 def _load_report(report_path: Path) -> dict:
@@ -633,6 +720,97 @@ def _mark_report_status(report_path: Path, status: Literal["ok", "degraded"], re
     _write_report(report_path, report)
 
 
+def _degraded_should_fail(spec: AssetSpec, options: BuildOptions) -> bool:
+    if options.strict:
+        return True
+    return spec.kind == "character" and bool(spec.character_qc_enforced) and not options.allow_degraded_character
+
+
+def _resolve_path_hint(
+    raw: str,
+    *,
+    base_dir: Path,
+    project_root: Path,
+    spec_path: Path,
+) -> Path:
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return candidate
+    if (base_dir / candidate).exists():
+        return (base_dir / candidate).resolve()
+    if (project_root / candidate).exists():
+        return (project_root / candidate).resolve()
+    return (spec_path.parent / candidate).resolve()
+
+
+def _default_curated_clip_path(base_dir: Path, clip_name: str) -> Path | None:
+    clip_dir = base_dir / "clips"
+    candidates = [
+        clip_dir / f"{clip_name}.glb",
+        clip_dir / f"{clip_name}.fbx",
+        clip_dir / f"{clip_name}.gltf",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_curated_animation_sources(
+    *,
+    spec: AssetSpec,
+    spec_path: Path,
+    requested_clips: list[str],
+    settings: Settings,
+) -> tuple[list[tuple[str, Path]], list[str], Path | None]:
+    tripo_cfg = spec.resolved_tripo()
+    raw_dir = tripo_cfg.curated_animation_dir or f"assets_pipeline/animation_library/{spec.name}"
+    base_dir = _resolve_path_hint(
+        raw_dir,
+        base_dir=settings.project_root / "assets_pipeline" / "animation_library" / spec.name,
+        project_root=settings.project_root,
+        spec_path=spec_path,
+    )
+
+    clip_entries: list[tuple[str, Path]] = []
+    missing: list[str] = []
+    for clip_name in requested_clips:
+        mapped = tripo_cfg.curated_clip_files.get(clip_name)
+        clip_path: Path | None
+        if mapped:
+            clip_path = _resolve_path_hint(
+                mapped,
+                base_dir=base_dir,
+                project_root=settings.project_root,
+                spec_path=spec_path,
+            )
+            if not clip_path.exists():
+                clip_path = None
+        else:
+            clip_path = _default_curated_clip_path(base_dir, clip_name)
+        if clip_path is None:
+            missing.append(clip_name)
+            continue
+        clip_entries.append((clip_name, clip_path))
+
+    retarget_map: Path | None = None
+    if tripo_cfg.retarget_map_path:
+        maybe = _resolve_path_hint(
+            tripo_cfg.retarget_map_path,
+            base_dir=base_dir,
+            project_root=settings.project_root,
+            spec_path=spec_path,
+        )
+        if maybe.exists():
+            retarget_map = maybe
+    else:
+        default_map = base_dir / "retarget_map.json"
+        if default_map.exists():
+            retarget_map = default_map
+
+    return clip_entries, missing, retarget_map
+
+
 def _normalize_qc_issues(report: dict, spec: AssetSpec, lod0_target: int, lod1_target: int) -> list[str]:
     issues: list[str] = []
 
@@ -658,6 +836,93 @@ def _normalize_qc_issues(report: dict, spec: AssetSpec, lod0_target: int, lod1_t
     objects_after = report.get("objects_after", report.get("object_count"))
     if isinstance(objects_after, int) and objects_after > 3:
         issues.append(f"normalized object_count too high: {objects_after}")
+
+    return issues
+
+
+def _character_enforced_qc_issues(
+    *,
+    report: dict[str, Any],
+    spec: AssetSpec,
+    requested_clips: list[str],
+    in_place: bool,
+    lod0_target: int,
+    lod1_target: int,
+) -> list[str]:
+    issues = _normalize_qc_issues(report, spec, lod0_target=lod0_target, lod1_target=lod1_target)
+
+    bone_scale_keys_remaining = report.get("bone_scale_keys_remaining")
+    if isinstance(bone_scale_keys_remaining, int) and bone_scale_keys_remaining > 0:
+        issues.append(f"bone_scale_keys_remaining={bone_scale_keys_remaining}")
+
+    max_vertex_influences_after = report.get("max_vertex_influences_after")
+    if isinstance(max_vertex_influences_after, int) and max_vertex_influences_after > 4:
+        issues.append(f"max_vertex_influences_after={max_vertex_influences_after} (>4)")
+
+    if in_place:
+        root_motion_max_xy = report.get("root_motion_max_xy")
+        if isinstance(root_motion_max_xy, (int, float)) and float(root_motion_max_xy) > 0.02:
+            issues.append(f"root_motion_max_xy={float(root_motion_max_xy):.4f} (>0.02)")
+
+    exported_clip_names = report.get("clip_names")
+    if not isinstance(exported_clip_names, list):
+        exported_clip_names = []
+    missing = _missing_clip_names(requested_clips, exported_clip_names)
+    if missing:
+        issues.append("missing requested clips: " + ", ".join(missing))
+
+    hand_lock_error_cm_max = report.get("hand_lock_error_cm_max")
+    if isinstance(hand_lock_error_cm_max, (int, float)) and float(hand_lock_error_cm_max) > 3.0:
+        issues.append(f"hand_lock_error_cm_max={float(hand_lock_error_cm_max):.2f} (>3.00)")
+
+    if bool(report.get("ads_enabled")):
+        ads_targeted = report.get("ads_clips_targeted")
+        if not isinstance(ads_targeted, list):
+            ads_targeted = []
+        ads_baked = report.get("ads_clips_baked")
+        if not isinstance(ads_baked, list):
+            ads_baked = []
+        ads_baked_keys = {str(name).strip().lower() for name in ads_baked if str(name).strip()}
+        missing_ads = [name for name in ads_targeted if str(name).strip().lower() not in ads_baked_keys]
+        if missing_ads:
+            issues.append("missing ADS baked clips: " + ", ".join(str(name) for name in missing_ads))
+
+        left_hand_grip_error_cm_max = report.get("left_hand_grip_error_cm_max")
+        if isinstance(left_hand_grip_error_cm_max, (int, float)) and float(left_hand_grip_error_cm_max) > 3.0:
+            issues.append(f"left_hand_grip_error_cm_max={float(left_hand_grip_error_cm_max):.2f} (>3.00)")
+
+        ads_eye_to_sight_m_max = report.get("ads_eye_to_sight_m_max")
+        if isinstance(ads_eye_to_sight_m_max, (int, float)) and float(ads_eye_to_sight_m_max) > 0.20:
+            issues.append(f"ads_eye_to_sight_m_max={float(ads_eye_to_sight_m_max):.3f} (>0.200)")
+
+        ads_eye_weapon_alignment_deg_max = report.get("ads_eye_weapon_alignment_deg_max")
+        if (
+            isinstance(ads_eye_weapon_alignment_deg_max, (int, float))
+            and float(ads_eye_weapon_alignment_deg_max) > 15.0
+        ):
+            issues.append(
+                f"ads_eye_weapon_alignment_deg_max={float(ads_eye_weapon_alignment_deg_max):.2f} (>15.00)"
+            )
+
+        ads_qc_failures = report.get("ads_qc_failures")
+        if isinstance(ads_qc_failures, list):
+            normalized_ads_failures = [str(item).strip() for item in ads_qc_failures if str(item).strip()]
+            if normalized_ads_failures:
+                issues.append("ads_qc_failures: " + "; ".join(normalized_ads_failures))
+
+    movement_qc_failures = report.get("movement_qc_failures")
+    if isinstance(movement_qc_failures, list):
+        normalized = [str(item).strip() for item in movement_qc_failures if str(item).strip()]
+        if normalized:
+            issues.append("movement_qc_failures: " + "; ".join(normalized))
+    locomotion_requested = [name for name in requested_clips if _is_locomotion_clip_name(name)]
+    locomotion_clips_checked = report.get("locomotion_clips_checked")
+    if locomotion_requested and (not isinstance(locomotion_clips_checked, int) or locomotion_clips_checked <= 0):
+        issues.append("locomotion clip metrics missing")
+
+    floating_components_after = report.get("floating_components_after")
+    if isinstance(floating_components_after, int) and floating_components_after > 0:
+        issues.append(f"floating_components_after={floating_components_after} (>0)")
 
     return issues
 
@@ -712,6 +977,10 @@ def _resolve_runtime_output(spec: AssetSpec, project_root: Path, *, is_weapon: b
     return None
 
 
+def _default_base_human_path(spec_name: str, project_root: Path) -> Path:
+    return project_root / "assets_pipeline" / "base_humans" / spec_name / "base_human_rigged.glb"
+
+
 def _copy_runtime_glb(src: Path, runtime_path: Path | None) -> None:
     if runtime_path is None:
         return
@@ -742,43 +1011,52 @@ def _fallback_weapon_recipe(spec: AssetSpec) -> Recipe:
                     "primitive": "cube",
                     "location": [0.0, 0.0, 0.08],
                     "rotation_deg": [0.0, 0.0, 0.0],
-                    "scale": [0.16, 0.05, 0.05],
+                    "scale": [0.05, 0.18, 0.05],
                     "ops": [{"type": "bevel", "width": 0.007, "segments": 2}],
+                    "material": "mat_body",
+                },
+                {
+                    "name": "handguard",
+                    "primitive": "cube",
+                    "location": [0.0, 0.14, 0.08],
+                    "rotation_deg": [0.0, 0.0, 0.0],
+                    "scale": [0.04, 0.10, 0.045],
+                    "ops": [{"type": "bevel", "width": 0.006, "segments": 2}],
                     "material": "mat_body",
                 },
                 {
                     "name": "barrel",
                     "primitive": "cylinder",
-                    "location": [0.0, 0.22, 0.08],
+                    "location": [0.0, 0.28, 0.08],
                     "rotation_deg": [90.0, 0.0, 0.0],
-                    "scale": [0.012, 0.012, 0.20],
+                    "scale": [0.012, 0.012, 0.24],
                     "ops": [{"type": "shade_smooth"}],
                     "material": "mat_body",
                 },
                 {
                     "name": "stock",
                     "primitive": "cube",
-                    "location": [0.0, -0.20, 0.08],
+                    "location": [0.0, -0.19, 0.08],
                     "rotation_deg": [0.0, 0.0, 0.0],
-                    "scale": [0.11, 0.04, 0.04],
+                    "scale": [0.045, 0.12, 0.04],
                     "ops": [{"type": "bevel", "width": 0.006, "segments": 2}],
                     "material": "mat_body",
                 },
                 {
                     "name": "mag",
                     "primitive": "cube",
-                    "location": [0.0, -0.02, -0.02],
+                    "location": [0.0, 0.02, -0.02],
                     "rotation_deg": [0.0, 8.0, 0.0],
-                    "scale": [0.04, 0.025, 0.08],
+                    "scale": [0.03, 0.05, 0.08],
                     "ops": [{"type": "bevel", "width": 0.005, "segments": 2}],
                     "material": "mat_accent",
                 },
                 {
                     "name": "grip",
                     "primitive": "cube",
-                    "location": [0.0, -0.07, 0.00],
+                    "location": [0.0, -0.05, 0.00],
                     "rotation_deg": [0.0, 12.0, 0.0],
-                    "scale": [0.03, 0.025, 0.07],
+                    "scale": [0.028, 0.04, 0.07],
                     "ops": [{"type": "bevel", "width": 0.005, "segments": 2}],
                     "material": "mat_accent",
                 },
@@ -1064,7 +1342,17 @@ def _build_with_procedural(
     paths: ArtifactPaths,
     forced_recipe: Recipe | None = None,
 ) -> ArtifactPaths:
-    from .openai_io import generate_concept_image, generate_recipe
+    generate_concept_image = None
+    generate_recipe = None
+
+    def _ensure_openai_functions() -> tuple[Any, Any]:
+        nonlocal generate_concept_image, generate_recipe
+        if generate_concept_image is None or generate_recipe is None:
+            from .openai_io import generate_concept_image as _generate_concept_image, generate_recipe as _generate_recipe
+
+            generate_concept_image = _generate_concept_image
+            generate_recipe = _generate_recipe
+        return generate_concept_image, generate_recipe
 
     image_prompt = make_image_prompt(spec)
     paths.image_prompt_log.write_text(image_prompt + "\n", encoding="utf-8")
@@ -1074,7 +1362,8 @@ def _build_with_procedural(
             print(f"[build:{spec.name}] skipping concept image")
         else:
             print(f"[build:{spec.name}] generating concept image")
-            generate_concept_image(image_prompt, paths.ref_image, settings)
+            openai_generate_image, _ = _ensure_openai_functions()
+            openai_generate_image(image_prompt, paths.ref_image, settings)
     else:
         print(f"[build:{spec.name}] reusing concept image")
 
@@ -1095,7 +1384,8 @@ def _build_with_procedural(
             has_ref = paths.ref_image.exists() and not options.skip_images
             user_prompt = make_recipe_prompt(spec, has_ref_image=has_ref)
             paths.recipe_prompt_log.write_text(user_prompt + "\n", encoding="utf-8")
-            recipe = generate_recipe(
+            _, openai_generate_recipe = _ensure_openai_functions()
+            recipe = openai_generate_recipe(
                 system_prompt=recipe_system_prompt(),
                 user_prompt=user_prompt,
                 settings=settings,
@@ -1182,8 +1472,11 @@ def _run_final_fallback(
         _sync_runtime_output_for_spec(spec, paths, settings)
         reasons.append("final fallback used procedural mannequin")
         _mark_report_status(paths.report_json, "degraded", reasons)
-        if options.strict:
-            raise RuntimeError("Build completed in degraded mode (strict enabled)")
+        if _degraded_should_fail(spec, options):
+            raise RuntimeError(
+                "Build completed in degraded mode "
+                "(strict enabled or character_qc_enforced without --allow-degraded-character)"
+            )
         return out_paths
     except Exception as exc:  # noqa: BLE001
         reasons.append(f"procedural fallback failed: {exc}")
@@ -1203,8 +1496,11 @@ def _run_final_fallback(
                 "salvaged_from": str(salvage),
             }
             _write_report(paths.report_json, report)
-            if options.strict:
-                raise RuntimeError("Build completed in degraded mode (strict enabled)")
+            if _degraded_should_fail(spec, options):
+                raise RuntimeError(
+                    "Build completed in degraded mode "
+                    "(strict enabled or character_qc_enforced without --allow-degraded-character)"
+                )
             return paths
         raise
 
@@ -1212,6 +1508,7 @@ def _run_final_fallback(
 def _build_with_tripo(
     *,
     spec: AssetSpec,
+    spec_path: Path,
     options: BuildOptions,
     settings: Settings,
     paths: ArtifactPaths,
@@ -1224,6 +1521,8 @@ def _build_with_tripo(
     )
 
     degraded_reasons: list[str] = []
+    tripo_cfg = spec.resolved_tripo()
+    character_qc_enforced = spec.kind == "character" and bool(spec.character_qc_enforced)
     weapon_cfg: PrimaryWeaponSpec | None = spec.primary_weapon() if spec.kind == "character" else None
 
     if options.skip_openai:
@@ -1263,15 +1562,42 @@ def _build_with_tripo(
                 degraded_reasons.append(f"weapon offline fallback failed: {exc}")
         degraded_reasons.append("provider tripo disabled by --skip-openai")
         _mark_report_status(paths.report_json, "degraded", degraded_reasons)
-        if options.strict:
-            raise RuntimeError("Build completed in degraded mode (strict enabled)")
+        if _degraded_should_fail(spec, options):
+            raise RuntimeError(
+                "Build completed in degraded mode "
+                "(strict enabled or character_qc_enforced without --allow-degraded-character)"
+            )
         return out_paths
 
-    tripo_cfg = spec.resolved_tripo()
     preferred_mode = tripo_cfg.mode
     requested_rig = _resolve_rig(spec, options)
     requested_clip_requests = _requested_animation_clip_requests(spec)
     requested_clips = [r.output_clip_name for r in requested_clip_requests]
+    tripo_clip_requests = list(requested_clip_requests)
+    animation_clip_sources: list[tuple[str, Path]] = []
+    curated_missing_clips: list[str] = []
+    retarget_map_path: Path | None = None
+
+    if spec.kind == "character" and requested_clips and tripo_cfg.animation_source in {"curated", "curated_then_tripo"}:
+        curated_sources, curated_missing_clips, retarget_map_path = _resolve_curated_animation_sources(
+            spec=spec,
+            spec_path=spec_path,
+            requested_clips=requested_clips,
+            settings=settings,
+        )
+        animation_clip_sources.extend(curated_sources)
+        if tripo_cfg.animation_source == "curated":
+            tripo_clip_requests = []
+            if curated_missing_clips:
+                degraded_reasons.append(
+                    "curated animation_source requested but required clips are missing: "
+                    + ", ".join(curated_missing_clips)
+                )
+        else:
+            missing_set = {name.lower() for name in curated_missing_clips}
+            tripo_clip_requests = [
+                req for req in requested_clip_requests if req.output_clip_name.lower() in missing_set
+            ]
 
     quality_preset = _effective_quality_preset(spec, settings)
     if spec.kind == "character" and quality_preset == "csgo":
@@ -1280,7 +1606,6 @@ def _build_with_tripo(
         lod0_target, lod1_target = spec.tri_budget, min(spec.tri_budget, settings.character_lod1_tris)
 
     face_limit = _tripo_face_limit(lod0_target)
-
     tripo_prompt = make_tripo_prompt(spec)
     paths.tripo_prompt_log.write_text(tripo_prompt + "\n", encoding="utf-8")
 
@@ -1329,13 +1654,35 @@ def _build_with_tripo(
         "rig": requested_rig,
         "animations": requested_clips,
         "animation_presets": {r.output_clip_name: r.tripo_preset_name for r in requested_clip_requests},
+        "animation_source": tripo_cfg.animation_source,
+        "curated_animation_dir": tripo_cfg.curated_animation_dir,
+        "curated_clip_files": tripo_cfg.curated_clip_files,
+        "retarget_map_path": str(retarget_map_path) if retarget_map_path else tripo_cfg.retarget_map_path,
+        "character_model_source": spec.resolved_character_model_source(),
+        "base_human_contract_path": str(_default_base_human_path(spec.name, settings.project_root)),
+        "character_qc_enforced": character_qc_enforced,
         "in_place": tripo_cfg.in_place,
     }
+    if weapon_cfg is not None:
+        build_json["weapon_attach"] = {
+            "socket_bone_name": weapon_cfg.attach.socket_bone_name,
+            "bone_semantic": weapon_cfg.attach.bone_semantic,
+            "offset_m": weapon_cfg.attach.offset_m,
+            "rotation_deg": weapon_cfg.attach.rotation_deg,
+            "scale": weapon_cfg.attach.scale,
+            "grip_right_offset_m": weapon_cfg.attach.grip_right_offset_m,
+            "grip_left_offset_m": weapon_cfg.attach.grip_left_offset_m,
+            "sight_offset_m": weapon_cfg.attach.sight_offset_m,
+            "ads_enabled": weapon_cfg.attach.ads_enabled,
+            "ads_clip_names": weapon_cfg.attach.ads_clip_names,
+            "ads_aim_distance_m": weapon_cfg.attach.ads_aim_distance_m,
+            "ads_head_bone": weapon_cfg.attach.ads_head_bone,
+            "ads_spine_bones": weapon_cfg.attach.ads_spine_bones,
+        }
     _save_recipe(paths.recipe_json, build_json)
 
     source_model: Path | None = None
-    source_task_payload: dict = {}
-    animation_models: list[Path] = []
+    source_task_payload: dict[str, Any] = {}
     weapon_outcome: WeaponBuildOutcome | None = None
     weapon_model_path: Path | None = None
 
@@ -1345,7 +1692,6 @@ def _build_with_tripo(
         source_task_payload = _load_json(paths.tripo_task_json)
     else:
         attempts: list[tuple[str, str, bool, list[Path]]] = []
-
         if image_multiview:
             attempts.append(("A", "multiview", requested_rig, image_multiview))
             attempts.append(("B", "multiview", False, image_multiview))
@@ -1401,7 +1747,25 @@ def _build_with_tripo(
             reasons=degraded_reasons,
         )
 
-    if requested_clips:
+    hybrid_base_human_applied = False
+    if spec.kind == "character" and spec.resolved_character_model_source() == "base_human_hybrid":
+        base_human_path = _default_base_human_path(spec.name, settings.project_root)
+        if base_human_path.exists():
+            source_model = base_human_path
+            hybrid_base_human_applied = True
+        else:
+            degraded_reasons.append(
+                "character_model_source=base_human_hybrid requested but base asset missing: "
+                f"{base_human_path}"
+            )
+
+    if hybrid_base_human_applied and tripo_clip_requests:
+        degraded_reasons.append(
+            "base_human_hybrid currently requires curated animations; skipping Tripo clip generation"
+        )
+        tripo_clip_requests = []
+
+    if tripo_clip_requests:
         if not source_task_payload:
             source_task_payload = _load_json(paths.tripo_task_json)
         try:
@@ -1412,7 +1776,7 @@ def _build_with_tripo(
                         output_clip_name=req.output_clip_name,
                         preset_name=req.tripo_preset_name,
                     )
-                    for req in requested_clip_requests
+                    for req in tripo_clip_requests
                 ],
                 in_place=tripo_cfg.in_place,
                 out_dir=paths.tripo_raw_dir,
@@ -1420,21 +1784,29 @@ def _build_with_tripo(
             )
             ok_clips = [r for r in clip_results if r.path is not None and r.path.exists()]
             failed = [r for r in clip_results if r.path is None]
-            animation_models = [r.path for r in ok_clips if r.path is not None]
+            animation_clip_sources.extend([(r.clip_name, r.path) for r in ok_clips if r.path is not None])
             for bad in failed:
                 degraded_reasons.append(f"animation clip '{bad.clip_name}' failed: {bad.error}")
-            if not animation_models:
+            if not ok_clips and not animation_clip_sources:
                 degraded_reasons.append("all requested animation clips failed")
         except Exception as exc:  # noqa: BLE001
             degraded_reasons.append(f"animation stage failed: {exc}")
+
+    deduped_animation_sources: list[tuple[str, Path]] = []
+    seen_animation_names: set[str] = set()
+    for output_name, clip_path in animation_clip_sources:
+        key = output_name.strip().lower()
+        if not key or key in seen_animation_names:
+            continue
+        seen_animation_names.add(key)
+        deduped_animation_sources.append((output_name, clip_path))
+    animation_clip_sources = deduped_animation_sources
 
     if weapon_cfg is not None and weapon_cfg.embed_in_character_glb:
         try:
             runtime_override = _loadout_weapon_runtime_path(weapon_cfg, settings.project_root)
             if not weapon_cfg.generate_if_missing and runtime_override is not None and not runtime_override.exists():
-                degraded_reasons.append(
-                    f"weapon file missing and generate_if_missing=false: {runtime_override}"
-                )
+                degraded_reasons.append(f"weapon file missing and generate_if_missing=false: {runtime_override}")
             else:
                 weapon_outcome = ensure_weapon_built(
                     weapon_spec_name_or_path=weapon_cfg.spec or "",
@@ -1466,30 +1838,25 @@ def _build_with_tripo(
             exported_clip_names = []
         missing_clips = _missing_clip_names(requested_clips, exported_clip_names)
         if missing_clips:
-            degraded_reasons.append(
-                "missing requested clip names in export: " + ", ".join(missing_clips)
-            )
+            degraded_reasons.append("missing requested clip names in export: " + ", ".join(missing_clips))
         _update_report_fields(
             paths.report_json,
             {
                 "requested_clips": requested_clips,
                 "missing_clips": missing_clips,
+                "animation_source": tripo_cfg.animation_source,
+                "curated_missing_clips": curated_missing_clips,
+                "base_human_contract_path": str(_default_base_human_path(spec.name, settings.project_root)),
+                "base_human_applied": hybrid_base_human_applied,
             },
         )
-        if weapon_cfg is not None:
-            _update_report_fields(
-                paths.report_json,
-                {
-                    "weapon_built": bool(weapon_outcome and weapon_outcome.glb_path.exists()),
-                    "weapon_path": str(weapon_outcome.glb_path) if weapon_outcome else "",
-                    "weapon_embedded": bool(weapon_cfg.embed_in_character_glb),
-                    "muzzle_socket_name": weapon_cfg.muzzle_socket_name,
-                },
-            )
         if degraded_reasons:
             _mark_report_status(paths.report_json, "degraded", degraded_reasons)
-            if options.strict:
-                raise RuntimeError("Build completed in degraded mode (strict enabled)")
+            if _degraded_should_fail(spec, options):
+                raise RuntimeError(
+                    "Build completed in degraded mode "
+                    "(strict enabled or character_qc_enforced without --allow-degraded-character)"
+                )
         return paths
 
     normalize_mode: Literal["generic", "character", "weapon"]
@@ -1501,7 +1868,38 @@ def _build_with_tripo(
         normalize_mode = "generic"
 
     normalize_ok = False
-    for attempt in range(1, settings.max_retries + 2):
+    max_attempts = settings.max_retries + 1
+    if character_qc_enforced:
+        max_attempts = max(max_attempts, 2)
+
+    grip_right_offset: tuple[float, float, float] | None = None
+    grip_left_offset: tuple[float, float, float] | None = None
+    sight_offset: tuple[float, float, float] | None = None
+    ads_enabled = False
+    ads_clip_names: list[str] = []
+    ads_aim_distance_m = 12.0
+    ads_eye_offset_m: tuple[float, float, float] | None = None
+    ads_head_bone: str | None = None
+    ads_spine_bones: list[str] = []
+    if weapon_cfg is not None and weapon_cfg.embed_in_character_glb:
+        if weapon_cfg.attach.grip_right_offset_m is not None:
+            grip_right_offset = tuple(float(v) for v in weapon_cfg.attach.grip_right_offset_m)
+        if weapon_cfg.attach.grip_left_offset_m is not None:
+            grip_left_offset = tuple(float(v) for v in weapon_cfg.attach.grip_left_offset_m)
+        if weapon_cfg.attach.sight_offset_m is not None:
+            sight_offset = tuple(float(v) for v in weapon_cfg.attach.sight_offset_m)
+        ads_enabled = bool(weapon_cfg.attach.ads_enabled)
+        raw_ads_clips = [str(name).strip() for name in weapon_cfg.attach.ads_clip_names if str(name).strip()]
+        ads_clip_names = raw_ads_clips if raw_ads_clips else (_default_ads_clip_names(requested_clips) if ads_enabled else [])
+        ads_aim_distance_m = float(weapon_cfg.attach.ads_aim_distance_m)
+        if weapon_cfg.attach.ads_eye_offset_m is not None:
+            ads_eye_offset_m = tuple(float(v) for v in weapon_cfg.attach.ads_eye_offset_m)
+        ads_head_bone = (
+            str(weapon_cfg.attach.ads_head_bone).strip() if weapon_cfg.attach.ads_head_bone else None
+        )
+        ads_spine_bones = [str(name).strip() for name in weapon_cfg.attach.ads_spine_bones if str(name).strip()]
+
+    for attempt in range(1, max_attempts + 1):
         print(f"[build:{spec.name}] running Blender normalize (attempt {attempt})")
         weapon_offset = (0.0, 0.0, 0.0)
         weapon_rot = (0.0, 0.0, 0.0)
@@ -1528,7 +1926,11 @@ def _build_with_tripo(
             primary_color=spec.colors.primary,
             secondary_color=spec.colors.secondary,
             mode=normalize_mode,
-            animation_models=animation_models,
+            animation_clips=animation_clip_sources,
+            retarget_map_path=retarget_map_path,
+            canonical_pose="T" if spec.kind == "character" else "none",
+            aggressive_character_fix=(character_qc_enforced and attempt >= 2),
+            character_qc_enforced=character_qc_enforced,
             weapon_model=weapon_model_path if weapon_cfg is not None and weapon_cfg.embed_in_character_glb else None,
             weapon_socket_bone_name=socket_bone,
             weapon_bone_semantic=socket_semantic,
@@ -1536,7 +1938,17 @@ def _build_with_tripo(
             weapon_offset_m=weapon_offset,
             weapon_rotation_deg=weapon_rot,
             weapon_scale=weapon_scale,
+            grip_right_offset_m=grip_right_offset,
+            grip_left_offset_m=grip_left_offset,
+            sight_offset_m=sight_offset,
+            ads_enabled=ads_enabled,
+            ads_clip_names=ads_clip_names,
+            ads_aim_distance_m=ads_aim_distance_m,
+            ads_eye_offset_m=ads_eye_offset_m,
+            ads_head_bone=ads_head_bone,
+            ads_spine_bones=ads_spine_bones,
             requested_clip_names=requested_clips,
+            in_place=tripo_cfg.in_place,
         )
         if rc != 0:
             degraded_reasons.append(f"Blender normalize attempt {attempt} failed (rc={rc})")
@@ -1551,41 +1963,46 @@ def _build_with_tripo(
             elif report_reasons:
                 degraded_reasons.append(str(report_reasons))
 
-        clip_count = report.get("clip_count")
-        if requested_clips and isinstance(clip_count, int):
-            if clip_count < len(requested_clips):
-                degraded_reasons.append(
-                    f"missing animation clips in export: got {clip_count}, expected {len(requested_clips)}"
-                )
-            if clip_count <= 0:
-                degraded_reasons.append("export contains no animation clips")
         exported_clip_names = report.get("clip_names")
         if not isinstance(exported_clip_names, list):
             exported_clip_names = []
         missing_clips = _missing_clip_names(requested_clips, exported_clip_names)
         if missing_clips:
-            degraded_reasons.append(
-                "missing requested clip names in export: " + ", ".join(missing_clips)
-            )
+            degraded_reasons.append("missing requested clip names in export: " + ", ".join(missing_clips))
         _update_report_fields(
             paths.report_json,
             {
                 "requested_clips": requested_clips,
                 "missing_clips": missing_clips,
+                "animation_source": tripo_cfg.animation_source,
+                "curated_missing_clips": curated_missing_clips,
             },
         )
+
         if normalize_mode == "character":
             qc_issues = _normalize_qc_issues(report, spec, lod0_target=lod0_target, lod1_target=lod1_target)
+            if character_qc_enforced:
+                qc_issues.extend(
+                    _character_enforced_qc_issues(
+                        report=report,
+                        spec=spec,
+                        requested_clips=requested_clips,
+                        in_place=tripo_cfg.in_place,
+                        lod0_target=lod0_target,
+                        lod1_target=lod1_target,
+                    )
+                )
         elif normalize_mode == "weapon":
             qc_issues = _weapon_qc_issues(report, spec, target_tris=lod0_target)
         else:
             qc_issues = []
+
         if qc_issues:
-            degraded_reasons.extend(qc_issues)
+            unique_qc_issues = list(dict.fromkeys(qc_issues))
+            degraded_reasons.extend(unique_qc_issues)
             qc_log = paths.build_log.parent / f"{spec.name}_normalize_qc_{attempt}.txt"
-            qc_log.write_text("\n".join(qc_issues) + "\n", encoding="utf-8")
-            # Keep result as usable; continue only if retries remain.
-            if attempt <= settings.max_retries:
+            qc_log.write_text("\n".join(unique_qc_issues) + "\n", encoding="utf-8")
+            if attempt < max_attempts:
                 continue
 
         normalize_ok = True
@@ -1604,7 +2021,14 @@ def _build_with_tripo(
     if runtime_output is not None and paths.glb_file.exists():
         _copy_runtime_glb(paths.glb_file, runtime_output)
 
-    report_fields: dict = {}
+    report_fields: dict[str, Any] = {
+        "animation_source": tripo_cfg.animation_source,
+        "curated_missing_clips": curated_missing_clips,
+        "character_model_source": spec.resolved_character_model_source(),
+        "base_human_contract_path": str(_default_base_human_path(spec.name, settings.project_root)),
+        "base_human_applied": hybrid_base_human_applied,
+        "character_qc_enforced": character_qc_enforced,
+    }
     if runtime_output is not None:
         report_fields["runtime_output_path"] = str(runtime_output)
     if weapon_cfg is not None:
@@ -1613,6 +2037,15 @@ def _build_with_tripo(
                 "weapon_built": bool(weapon_model_path and weapon_model_path.exists()),
                 "weapon_path": str(weapon_model_path) if weapon_model_path else "",
                 "muzzle_socket_name": weapon_cfg.muzzle_socket_name,
+                "grip_right_offset_m": weapon_cfg.attach.grip_right_offset_m,
+                "grip_left_offset_m": weapon_cfg.attach.grip_left_offset_m,
+                "sight_offset_m": weapon_cfg.attach.sight_offset_m,
+                "ads_enabled": bool(weapon_cfg.attach.ads_enabled and weapon_cfg.embed_in_character_glb),
+                "ads_clips_targeted": ads_clip_names if weapon_cfg.embed_in_character_glb else [],
+                "ads_aim_distance_m": float(weapon_cfg.attach.ads_aim_distance_m),
+                "ads_eye_offset_m": weapon_cfg.attach.ads_eye_offset_m,
+                "ads_head_bone": weapon_cfg.attach.ads_head_bone,
+                "ads_spine_bones": weapon_cfg.attach.ads_spine_bones,
             }
         )
     if normalize_mode == "weapon":
@@ -1620,13 +2053,15 @@ def _build_with_tripo(
         report_fields.setdefault("weapon_path", str(runtime_output) if runtime_output else str(paths.glb_file))
         report_fields.setdefault("weapon_embedded", False)
         report_fields.setdefault("muzzle_socket_name", "muzzle")
-    if report_fields:
-        _update_report_fields(paths.report_json, report_fields)
+    _update_report_fields(paths.report_json, report_fields)
 
     if degraded_reasons:
-        _mark_report_status(paths.report_json, "degraded", degraded_reasons)
-        if options.strict:
-            raise RuntimeError("Build completed in degraded mode (strict enabled)")
+        _mark_report_status(paths.report_json, "degraded", list(dict.fromkeys(degraded_reasons)))
+        if _degraded_should_fail(spec, options):
+            raise RuntimeError(
+                "Build completed in degraded mode "
+                "(strict enabled or character_qc_enforced without --allow-degraded-character)"
+            )
     else:
         _mark_report_status(paths.report_json, "ok", [])
 
@@ -1665,16 +2100,34 @@ def build_asset(spec_path_or_name: str, options: BuildOptions, settings: Setting
             print(f"[dry-run] target_tris_lod0={lod0_target}")
             print(f"[dry-run] target_tris_lod1={lod1_target}")
             print(f"[dry-run] requested_clips={requested_clips}")
+            print(f"[dry-run] animation_source={spec.resolved_tripo().animation_source}")
+            print(f"[dry-run] character_model_source={spec.resolved_character_model_source()}")
+            print(f"[dry-run] character_qc_enforced={bool(spec.character_qc_enforced)}")
             weapon = spec.primary_weapon()
             if weapon is not None and weapon.embed_in_character_glb:
                 print(f"[dry-run] loadout.primary_weapon.spec={weapon.spec}")
                 print(f"[dry-run] loadout.primary_weapon.socket={weapon.attach.socket_bone_name}")
+                print(f"[dry-run] loadout.primary_weapon.ads_enabled={bool(weapon.attach.ads_enabled)}")
+                if weapon.attach.ads_enabled:
+                    ads_clips = (
+                        weapon.attach.ads_clip_names
+                        if weapon.attach.ads_clip_names
+                        else _default_ads_clip_names(requested_clips)
+                    )
+                    print(f"[dry-run] loadout.primary_weapon.ads_clip_names={ads_clips}")
+                    print(f"[dry-run] loadout.primary_weapon.ads_eye_offset_m={weapon.attach.ads_eye_offset_m}")
         if provider == "tripo":
             print(f"[dry-run] tripo_raw_dir={paths.tripo_raw_dir}")
         return paths
 
     if provider == "tripo":
-        return _build_with_tripo(spec=spec, options=options, settings=settings, paths=paths)
+        return _build_with_tripo(
+            spec=spec,
+            spec_path=spec_path,
+            options=options,
+            settings=settings,
+            paths=paths,
+        )
 
     output_paths = _build_with_procedural(spec=spec, options=options, settings=settings, paths=paths)
     _mark_report_status(paths.report_json, "ok", [])

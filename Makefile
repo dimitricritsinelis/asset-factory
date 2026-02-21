@@ -4,7 +4,7 @@ PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 ARGS ?=
 
-.PHONY: setup smoke build build-all clean-temp
+.PHONY: setup smoke test-raider-cleanup test-raider-movement test-raider-ads build build-all clean-temp
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -13,6 +13,15 @@ setup:
 
 smoke:
 	$(PY) -m asset_factory build assets_pipeline/tests/smoke_cube.yaml --skip-openai --skip-images --force
+
+test-raider-cleanup:
+	$(PY) assets_pipeline/tests/test_raider_floating_cleanup.py
+
+test-raider-movement:
+	$(PY) assets_pipeline/tests/test_raider_movement_qc.py
+
+test-raider-ads:
+	$(PY) assets_pipeline/tests/test_raider_ads_qc.py
 
 build:
 	@test -n "$(NAME)" || (echo "Usage: make build NAME=<spec_name>" && exit 1)

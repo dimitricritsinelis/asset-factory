@@ -37,6 +37,10 @@ class TripoGeneratorSpec(BaseModel):
     texture: bool = True
     animations: list[str] = Field(default_factory=list)
     animation_presets: dict[str, str] = Field(default_factory=dict)
+    animation_source: Literal["curated", "tripo", "curated_then_tripo"] = "tripo"
+    curated_animation_dir: str | None = None
+    curated_clip_files: dict[str, str] = Field(default_factory=dict)
+    retarget_map_path: str | None = None
     in_place: bool = True
 
 
@@ -44,6 +48,7 @@ class GeneratorSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: Literal["procedural", "tripo"] | None = None
+    character_model_source: Literal["full_body", "base_human_hybrid"] = "full_body"
     tripo: TripoGeneratorSpec = Field(default_factory=TripoGeneratorSpec)
 
 
@@ -55,6 +60,15 @@ class WeaponAttachSpec(BaseModel):
     offset_m: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0], min_length=3, max_length=3)
     rotation_deg: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0], min_length=3, max_length=3)
     scale: float = 1.0
+    grip_right_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    grip_left_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    sight_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    ads_eye_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    ads_enabled: bool = False
+    ads_clip_names: list[str] = Field(default_factory=list)
+    ads_aim_distance_m: float = 12.0
+    ads_head_bone: str | None = None
+    ads_spine_bones: list[str] = Field(default_factory=list)
 
 
 class PrimaryWeaponSpec(BaseModel):
@@ -103,6 +117,7 @@ class AssetSpec(BaseModel):
     colors: ColorSpec
     seed: int | None = None
     generator: GeneratorSpec | None = None
+    character_qc_enforced: bool = False
     runtime_output_path: str | None = None
     loadout: LoadoutSpec | None = None
 
@@ -116,6 +131,11 @@ class AssetSpec(BaseModel):
             return self.generator.tripo
         default_mode = "multiview" if self.kind == "character" else "text"
         return TripoGeneratorSpec(mode=default_mode)
+
+    def resolved_character_model_source(self) -> Literal["full_body", "base_human_hybrid"]:
+        if self.generator:
+            return self.generator.character_model_source
+        return "full_body"
 
     def primary_weapon(self) -> PrimaryWeaponSpec | None:
         if not self.loadout:
