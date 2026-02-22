@@ -401,12 +401,24 @@ def _run_blender_normalize(
     grip_right_offset_m: tuple[float, float, float] | None = None,
     grip_left_offset_m: tuple[float, float, float] | None = None,
     sight_offset_m: tuple[float, float, float] | None = None,
+    use_weapon_driven_ik: bool = False,
+    require_weapon_markers: bool = False,
+    marker_grip_right_name: str = "WPN_GRIP_R",
+    marker_grip_left_name: str = "WPN_GRIP_L",
+    marker_sight_name: str = "WPN_SIGHT",
+    marker_muzzle_name: str = "WPN_MUZZLE",
     ads_enabled: bool = False,
     ads_clip_names: list[str] | None = None,
     ads_aim_distance_m: float = 12.0,
     ads_eye_offset_m: tuple[float, float, float] | None = None,
     ads_head_bone: str | None = None,
     ads_spine_bones: list[str] | None = None,
+    qc_left_hand_grip_error_cm_max: float = 3.0,
+    qc_right_hand_grip_error_cm_max: float = 3.0,
+    qc_ads_eye_to_sight_m_max: float = 0.20,
+    qc_ads_eye_weapon_alignment_deg_max: float = 15.0,
+    qc_ads_sight_alignment_deg_max: float = 15.0,
+    qc_ads_wrist_delta_deg_max: float = 90.0,
     requested_clip_names: list[str] | None = None,
     in_place: bool = False,
 ) -> int:
@@ -491,6 +503,34 @@ def _run_blender_normalize(
             cmd.append("--grip_left_offset_m=" + f"{grip_left_offset_m[0]},{grip_left_offset_m[1]},{grip_left_offset_m[2]}")
         if sight_offset_m is not None:
             cmd.append("--sight_offset_m=" + f"{sight_offset_m[0]},{sight_offset_m[1]},{sight_offset_m[2]}")
+        if use_weapon_driven_ik:
+            cmd.append("--use_weapon_driven_ik")
+        if require_weapon_markers:
+            cmd.append("--require_weapon_markers")
+        cmd.extend(
+            [
+                "--marker_grip_right_name",
+                marker_grip_right_name,
+                "--marker_grip_left_name",
+                marker_grip_left_name,
+                "--marker_sight_name",
+                marker_sight_name,
+                "--marker_muzzle_name",
+                marker_muzzle_name,
+                "--qc_left_hand_grip_error_cm_max",
+                str(float(qc_left_hand_grip_error_cm_max)),
+                "--qc_right_hand_grip_error_cm_max",
+                str(float(qc_right_hand_grip_error_cm_max)),
+                "--qc_ads_eye_to_sight_m_max",
+                str(float(qc_ads_eye_to_sight_m_max)),
+                "--qc_ads_eye_weapon_alignment_deg_max",
+                str(float(qc_ads_eye_weapon_alignment_deg_max)),
+                "--qc_ads_sight_alignment_deg_max",
+                str(float(qc_ads_sight_alignment_deg_max)),
+                "--qc_ads_wrist_delta_deg_max",
+                str(float(qc_ads_wrist_delta_deg_max)),
+            ]
+        )
         if ads_enabled:
             cmd.append("--ads_enabled")
             for clip_name in ads_clip_names or []:
@@ -876,6 +916,22 @@ def _character_enforced_qc_issues(
         issues.append(f"hand_lock_error_cm_max={float(hand_lock_error_cm_max):.2f} (>3.00)")
 
     if bool(report.get("ads_enabled")):
+        ads_thresholds_raw = report.get("ads_qc_thresholds")
+        ads_thresholds = ads_thresholds_raw if isinstance(ads_thresholds_raw, dict) else {}
+
+        def _ads_limit(key: str, default: float) -> float:
+            value = ads_thresholds.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+            return float(default)
+
+        left_limit = _ads_limit("left_hand_grip_error_cm_max", 3.0)
+        right_limit = _ads_limit("right_hand_grip_error_cm_max", 3.0)
+        eye_limit = _ads_limit("ads_eye_to_sight_m_max", 0.20)
+        eye_align_limit = _ads_limit("ads_eye_weapon_alignment_deg_max", 15.0)
+        sight_align_limit = _ads_limit("ads_sight_alignment_deg_max", 15.0)
+        wrist_limit = _ads_limit("ads_wrist_delta_deg_max", 90.0)
+
         ads_targeted = report.get("ads_clips_targeted")
         if not isinstance(ads_targeted, list):
             ads_targeted = []
@@ -888,21 +944,43 @@ def _character_enforced_qc_issues(
             issues.append("missing ADS baked clips: " + ", ".join(str(name) for name in missing_ads))
 
         left_hand_grip_error_cm_max = report.get("left_hand_grip_error_cm_max")
-        if isinstance(left_hand_grip_error_cm_max, (int, float)) and float(left_hand_grip_error_cm_max) > 3.0:
-            issues.append(f"left_hand_grip_error_cm_max={float(left_hand_grip_error_cm_max):.2f} (>3.00)")
+        if isinstance(left_hand_grip_error_cm_max, (int, float)) and float(left_hand_grip_error_cm_max) > left_limit:
+            issues.append(f"left_hand_grip_error_cm_max={float(left_hand_grip_error_cm_max):.2f} (>{left_limit:.2f})")
+
+        right_hand_grip_error_cm_max = report.get("right_hand_grip_error_cm_max")
+        if isinstance(right_hand_grip_error_cm_max, (int, float)) and float(right_hand_grip_error_cm_max) > right_limit:
+            issues.append(f"right_hand_grip_error_cm_max={float(right_hand_grip_error_cm_max):.2f} (>{right_limit:.2f})")
 
         ads_eye_to_sight_m_max = report.get("ads_eye_to_sight_m_max")
-        if isinstance(ads_eye_to_sight_m_max, (int, float)) and float(ads_eye_to_sight_m_max) > 0.20:
-            issues.append(f"ads_eye_to_sight_m_max={float(ads_eye_to_sight_m_max):.3f} (>0.200)")
+        if isinstance(ads_eye_to_sight_m_max, (int, float)) and float(ads_eye_to_sight_m_max) > eye_limit:
+            issues.append(f"ads_eye_to_sight_m_max={float(ads_eye_to_sight_m_max):.3f} (>{eye_limit:.3f})")
 
         ads_eye_weapon_alignment_deg_max = report.get("ads_eye_weapon_alignment_deg_max")
         if (
             isinstance(ads_eye_weapon_alignment_deg_max, (int, float))
-            and float(ads_eye_weapon_alignment_deg_max) > 15.0
+            and float(ads_eye_weapon_alignment_deg_max) > eye_align_limit
         ):
             issues.append(
-                f"ads_eye_weapon_alignment_deg_max={float(ads_eye_weapon_alignment_deg_max):.2f} (>15.00)"
+                f"ads_eye_weapon_alignment_deg_max={float(ads_eye_weapon_alignment_deg_max):.2f} (>{eye_align_limit:.2f})"
             )
+
+        ads_sight_alignment_deg_max = report.get("ads_sight_alignment_deg_max")
+        if isinstance(ads_sight_alignment_deg_max, (int, float)) and float(ads_sight_alignment_deg_max) > sight_align_limit:
+            issues.append(f"ads_sight_alignment_deg_max={float(ads_sight_alignment_deg_max):.2f} (>{sight_align_limit:.2f})")
+
+        ads_wrist_delta_deg_max = report.get("ads_wrist_delta_deg_max")
+        if isinstance(ads_wrist_delta_deg_max, (int, float)) and float(ads_wrist_delta_deg_max) > wrist_limit:
+            issues.append(f"ads_wrist_delta_deg_max={float(ads_wrist_delta_deg_max):.2f} (>{wrist_limit:.2f})")
+
+        if bool(report.get("require_weapon_markers")):
+            modes = report.get("weapon_anchor_modes")
+            if not isinstance(modes, dict):
+                issues.append("require_weapon_markers=true but weapon_anchor_modes missing")
+            else:
+                for key in ("grip_right_mode", "grip_left_mode", "sight_mode", "muzzle_mode"):
+                    mode = str(modes.get(key, "")).strip().lower()
+                    if mode != "marker":
+                        issues.append(f"require_weapon_markers=true but {key}={mode or 'missing'}")
 
         ads_qc_failures = report.get("ads_qc_failures")
         if isinstance(ads_qc_failures, list):
@@ -1875,12 +1953,24 @@ def _build_with_tripo(
     grip_right_offset: tuple[float, float, float] | None = None
     grip_left_offset: tuple[float, float, float] | None = None
     sight_offset: tuple[float, float, float] | None = None
+    use_weapon_driven_ik = False
+    require_weapon_markers = False
+    marker_grip_right_name = "WPN_GRIP_R"
+    marker_grip_left_name = "WPN_GRIP_L"
+    marker_sight_name = "WPN_SIGHT"
+    marker_muzzle_name = "WPN_MUZZLE"
     ads_enabled = False
     ads_clip_names: list[str] = []
     ads_aim_distance_m = 12.0
     ads_eye_offset_m: tuple[float, float, float] | None = None
     ads_head_bone: str | None = None
     ads_spine_bones: list[str] = []
+    qc_left_hand_grip_error_cm_max = 3.0
+    qc_right_hand_grip_error_cm_max = 3.0
+    qc_ads_eye_to_sight_m_max = 0.20
+    qc_ads_eye_weapon_alignment_deg_max = 15.0
+    qc_ads_sight_alignment_deg_max = 15.0
+    qc_ads_wrist_delta_deg_max = 90.0
     if weapon_cfg is not None and weapon_cfg.embed_in_character_glb:
         if weapon_cfg.attach.grip_right_offset_m is not None:
             grip_right_offset = tuple(float(v) for v in weapon_cfg.attach.grip_right_offset_m)
@@ -1888,6 +1978,12 @@ def _build_with_tripo(
             grip_left_offset = tuple(float(v) for v in weapon_cfg.attach.grip_left_offset_m)
         if weapon_cfg.attach.sight_offset_m is not None:
             sight_offset = tuple(float(v) for v in weapon_cfg.attach.sight_offset_m)
+        use_weapon_driven_ik = bool(weapon_cfg.attach.use_weapon_driven_ik)
+        require_weapon_markers = bool(weapon_cfg.attach.require_weapon_markers)
+        marker_grip_right_name = str(weapon_cfg.attach.marker_grip_right_name).strip() or "WPN_GRIP_R"
+        marker_grip_left_name = str(weapon_cfg.attach.marker_grip_left_name).strip() or "WPN_GRIP_L"
+        marker_sight_name = str(weapon_cfg.attach.marker_sight_name).strip() or "WPN_SIGHT"
+        marker_muzzle_name = str(weapon_cfg.attach.marker_muzzle_name).strip() or "WPN_MUZZLE"
         ads_enabled = bool(weapon_cfg.attach.ads_enabled)
         raw_ads_clips = [str(name).strip() for name in weapon_cfg.attach.ads_clip_names if str(name).strip()]
         ads_clip_names = raw_ads_clips if raw_ads_clips else (_default_ads_clip_names(requested_clips) if ads_enabled else [])
@@ -1898,6 +1994,12 @@ def _build_with_tripo(
             str(weapon_cfg.attach.ads_head_bone).strip() if weapon_cfg.attach.ads_head_bone else None
         )
         ads_spine_bones = [str(name).strip() for name in weapon_cfg.attach.ads_spine_bones if str(name).strip()]
+        qc_left_hand_grip_error_cm_max = float(weapon_cfg.attach.qc_left_hand_grip_error_cm_max)
+        qc_right_hand_grip_error_cm_max = float(weapon_cfg.attach.qc_right_hand_grip_error_cm_max)
+        qc_ads_eye_to_sight_m_max = float(weapon_cfg.attach.qc_ads_eye_to_sight_m_max)
+        qc_ads_eye_weapon_alignment_deg_max = float(weapon_cfg.attach.qc_ads_eye_weapon_alignment_deg_max)
+        qc_ads_sight_alignment_deg_max = float(weapon_cfg.attach.qc_ads_sight_alignment_deg_max)
+        qc_ads_wrist_delta_deg_max = float(weapon_cfg.attach.qc_ads_wrist_delta_deg_max)
 
     for attempt in range(1, max_attempts + 1):
         print(f"[build:{spec.name}] running Blender normalize (attempt {attempt})")
@@ -1941,12 +2043,24 @@ def _build_with_tripo(
             grip_right_offset_m=grip_right_offset,
             grip_left_offset_m=grip_left_offset,
             sight_offset_m=sight_offset,
+            use_weapon_driven_ik=use_weapon_driven_ik,
+            require_weapon_markers=require_weapon_markers,
+            marker_grip_right_name=marker_grip_right_name,
+            marker_grip_left_name=marker_grip_left_name,
+            marker_sight_name=marker_sight_name,
+            marker_muzzle_name=marker_muzzle_name,
             ads_enabled=ads_enabled,
             ads_clip_names=ads_clip_names,
             ads_aim_distance_m=ads_aim_distance_m,
             ads_eye_offset_m=ads_eye_offset_m,
             ads_head_bone=ads_head_bone,
             ads_spine_bones=ads_spine_bones,
+            qc_left_hand_grip_error_cm_max=qc_left_hand_grip_error_cm_max,
+            qc_right_hand_grip_error_cm_max=qc_right_hand_grip_error_cm_max,
+            qc_ads_eye_to_sight_m_max=qc_ads_eye_to_sight_m_max,
+            qc_ads_eye_weapon_alignment_deg_max=qc_ads_eye_weapon_alignment_deg_max,
+            qc_ads_sight_alignment_deg_max=qc_ads_sight_alignment_deg_max,
+            qc_ads_wrist_delta_deg_max=qc_ads_wrist_delta_deg_max,
             requested_clip_names=requested_clips,
             in_place=tripo_cfg.in_place,
         )
@@ -2040,12 +2154,26 @@ def _build_with_tripo(
                 "grip_right_offset_m": weapon_cfg.attach.grip_right_offset_m,
                 "grip_left_offset_m": weapon_cfg.attach.grip_left_offset_m,
                 "sight_offset_m": weapon_cfg.attach.sight_offset_m,
+                "use_weapon_driven_ik": bool(weapon_cfg.attach.use_weapon_driven_ik),
+                "require_weapon_markers": bool(weapon_cfg.attach.require_weapon_markers),
+                "marker_grip_right_name": weapon_cfg.attach.marker_grip_right_name,
+                "marker_grip_left_name": weapon_cfg.attach.marker_grip_left_name,
+                "marker_sight_name": weapon_cfg.attach.marker_sight_name,
+                "marker_muzzle_name": weapon_cfg.attach.marker_muzzle_name,
                 "ads_enabled": bool(weapon_cfg.attach.ads_enabled and weapon_cfg.embed_in_character_glb),
                 "ads_clips_targeted": ads_clip_names if weapon_cfg.embed_in_character_glb else [],
                 "ads_aim_distance_m": float(weapon_cfg.attach.ads_aim_distance_m),
                 "ads_eye_offset_m": weapon_cfg.attach.ads_eye_offset_m,
                 "ads_head_bone": weapon_cfg.attach.ads_head_bone,
                 "ads_spine_bones": weapon_cfg.attach.ads_spine_bones,
+                "ads_qc_thresholds": {
+                    "left_hand_grip_error_cm_max": float(weapon_cfg.attach.qc_left_hand_grip_error_cm_max),
+                    "right_hand_grip_error_cm_max": float(weapon_cfg.attach.qc_right_hand_grip_error_cm_max),
+                    "ads_eye_to_sight_m_max": float(weapon_cfg.attach.qc_ads_eye_to_sight_m_max),
+                    "ads_eye_weapon_alignment_deg_max": float(weapon_cfg.attach.qc_ads_eye_weapon_alignment_deg_max),
+                    "ads_sight_alignment_deg_max": float(weapon_cfg.attach.qc_ads_sight_alignment_deg_max),
+                    "ads_wrist_delta_deg_max": float(weapon_cfg.attach.qc_ads_wrist_delta_deg_max),
+                },
             }
         )
     if normalize_mode == "weapon":

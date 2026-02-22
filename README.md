@@ -60,7 +60,8 @@ This now includes a Blender-side output inspection gate (`assets_pipeline/tests/
 - no layered NLA evaluation in review mode (`use_nla=false`)
 - no non-unit pose-bone scales (deformation guard)
 - multi-frame per-clip ADS thresholds (dense sampling with start/end coverage)
-- `ads_eye_to_sight_m_max <= 0.20` and `ads_eye_weapon_alignment_deg_max <= 15.0`
+- `ads_eye_to_sight_m_max <= threshold`, `ads_eye_weapon_alignment_deg_max <= threshold`
+- `ads_sight_alignment_deg_max` and `ads_wrist_delta_deg_max` (anti-flip wrist stability)
 - catastrophic pose guards (elbow angle ranges, shoulder-hand span bounds, frame-to-frame hand jump limits)
 
 Build active character:
@@ -114,6 +115,11 @@ loadout:
     attach:
       socket_bone_name: weapon_socket_r
       bone_semantic: right_hand
+      use_weapon_driven_ik: true
+      marker_grip_right_name: WPN_GRIP_R
+      marker_grip_left_name: WPN_GRIP_L
+      marker_sight_name: WPN_SIGHT
+      marker_muzzle_name: WPN_MUZZLE
       ads_enabled: true
       ads_clip_names: [idle_rifle_in_place, walk_rifle_in_place, run_rifle_in_place, strafe_left_rifle_in_place]
       grip_right_offset_m: [-0.034, 0.054, 0.25]
@@ -124,6 +130,12 @@ loadout:
       ads_aim_distance_m: 12.0
       ads_head_bone: Head
       ads_spine_bones: [Spine01, Spine02, R_Clavicle, NeckTwist01, NeckTwist02]
+      qc_left_hand_grip_error_cm_max: 2.0
+      qc_right_hand_grip_error_cm_max: 2.0
+      qc_ads_eye_to_sight_m_max: 0.05
+      qc_ads_eye_weapon_alignment_deg_max: 2.0
+      qc_ads_sight_alignment_deg_max: 2.0
+      qc_ads_wrist_delta_deg_max: 45.0
     muzzle_socket_name: muzzle
 ```
 
@@ -171,6 +183,10 @@ Additional report fields for character QC include:
 - `head_aim_error_deg_max`
 - `ads_eye_to_sight_m_max`
 - `ads_eye_weapon_alignment_deg_max`
+- `ads_sight_alignment_deg_max`
+- `ads_wrist_delta_deg_max`
+- `ads_qc_thresholds`
+- `weapon_anchor_modes`
 - `ads_clip_metrics`
 - `requested_clips`
 - `missing_clips`

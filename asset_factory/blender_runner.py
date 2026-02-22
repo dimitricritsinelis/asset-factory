@@ -74,12 +74,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--grip_right_offset_m", type=str, default="")
     parser.add_argument("--grip_left_offset_m", type=str, default="")
     parser.add_argument("--sight_offset_m", type=str, default="")
+    parser.add_argument("--use_weapon_driven_ik", action="store_true")
+    parser.add_argument("--require_weapon_markers", action="store_true")
+    parser.add_argument("--marker_grip_right_name", type=str, default="WPN_GRIP_R")
+    parser.add_argument("--marker_grip_left_name", type=str, default="WPN_GRIP_L")
+    parser.add_argument("--marker_sight_name", type=str, default="WPN_SIGHT")
+    parser.add_argument("--marker_muzzle_name", type=str, default="WPN_MUZZLE")
     parser.add_argument("--ads_enabled", action="store_true")
     parser.add_argument("--ads_clip", action="append", default=[])
     parser.add_argument("--ads_aim_distance_m", type=float, default=12.0)
     parser.add_argument("--ads_eye_offset_m", type=str, default="")
     parser.add_argument("--ads_head_bone", type=str, default="")
     parser.add_argument("--ads_spine_bone", action="append", default=[])
+    parser.add_argument("--qc_left_hand_grip_error_cm_max", type=float, default=3.0)
+    parser.add_argument("--qc_right_hand_grip_error_cm_max", type=float, default=3.0)
+    parser.add_argument("--qc_ads_eye_to_sight_m_max", type=float, default=0.20)
+    parser.add_argument("--qc_ads_eye_weapon_alignment_deg_max", type=float, default=15.0)
+    parser.add_argument("--qc_ads_sight_alignment_deg_max", type=float, default=15.0)
+    parser.add_argument("--qc_ads_wrist_delta_deg_max", type=float, default=90.0)
     return parser.parse_args(argv)
 
 
@@ -248,13 +260,41 @@ def _ensure_socket_bone(
     *,
     socket_bone_name: str,
     bone_semantic: str,
+    weapon_driven_ik: bool,
 ) -> str:
     if armature_obj.type != "ARMATURE":
         raise RuntimeError("Socket bone creation requires an armature object")
 
-    parent_name: str | None = None
+    hand_bone_name: str | None = None
     if bone_semantic.strip().lower() == "right_hand":
-        parent_name = _find_right_hand_bone_name(armature_obj)
+        hand_bone_name = _find_right_hand_bone_name(armature_obj)
+
+    parent_name: str | None = hand_bone_name
+    if weapon_driven_ik:
+        by_lower = {bone.name.lower(): bone.name for bone in armature_obj.data.bones}
+        preferred = [
+            "spine03",
+            "spine_03",
+            "spine02",
+            "spine_02",
+            "spine2",
+            "chest",
+            "upperchest",
+            "spine01",
+            "spine_01",
+            "spine1",
+            "spine",
+            "pelvis",
+            "hips",
+            "root",
+        ]
+        for key in preferred:
+            resolved = by_lower.get(key)
+            if resolved:
+                parent_name = resolved
+                break
+        if parent_name is None and armature_obj.data.bones:
+            parent_name = armature_obj.data.bones[0].name
     if parent_name is None and armature_obj.data.bones:
         parent_name = armature_obj.data.bones[0].name
     if parent_name is None:
@@ -280,13 +320,57 @@ def _ensure_socket_bone(
     socket = edit_bones.get(socket_bone_name)
     if socket is None:
         socket = edit_bones.new(socket_bone_name)
-    socket.head = parent.tail.copy()
-    socket.tail = parent.tail + Vector((0.0, 0.06, 0.0))
+    reference = edit_bones.get(hand_bone_name) if hand_bone_name else None
+    if reference is not None and weapon_driven_ik:
+        socket.head = reference.tail.copy()
+        direction = reference.tail - reference.head
+        if direction.length < 1e-6:
+            direction = Vector((0.0, 0.06, 0.0))
+        else:
+            direction = direction.normalized() * 0.06
+        socket.tail = socket.head + direction
+    else:
+        socket.head = parent.tail.copy()
+        socket.tail = parent.tail + Vector((0.0, 0.06, 0.0))
     socket.parent = parent
     socket.use_connect = False
 
     bpy.ops.object.mode_set(mode="OBJECT")
     return socket_bone_name
+
+
+def _find_named_empty(
+    imported_objects: list[bpy.types.Object],
+    *,
+    preferred_name: str,
+    fallback_names: list[str],
+) -> bpy.types.Object | None:
+    candidates = [obj for obj in imported_objects if obj.type == "EMPTY"]
+    if not candidates:
+        return None
+
+    preferred = preferred_name.strip().lower()
+    if preferred:
+        for obj in candidates:
+            if obj.name.lower() == preferred:
+                return obj
+        for obj in candidates:
+            lower = obj.name.lower()
+            if lower.startswith(preferred + "."):
+                return obj
+
+    for raw in fallback_names:
+        key = raw.strip().lower()
+        if not key:
+            continue
+        for obj in candidates:
+            if obj.name.lower() == key:
+                return obj
+        for obj in candidates:
+            lower = obj.name.lower()
+            if lower.startswith(key + "."):
+                return obj
+    return None
 
 
 def _pick_muzzle_location(OPS, weapon_meshes: list[bpy.types.Object]) -> Vector:
@@ -373,6 +457,13 @@ def _attach_weapon_to_character(
     grip_right_offset_m: tuple[float, float, float] | None,
     grip_left_offset_m: tuple[float, float, float] | None,
     sight_offset_m: tuple[float, float, float] | None,
+    ads_enabled: bool,
+    use_weapon_driven_ik: bool,
+    require_weapon_markers: bool,
+    marker_grip_right_name: str,
+    marker_grip_left_name: str,
+    marker_sight_name: str,
+    marker_muzzle_name: str,
     ads_aim_distance_m: float,
 ) -> tuple[
     list[bpy.types.Object],
@@ -389,6 +480,12 @@ def _attach_weapon_to_character(
         "grip_right_mode": "heuristic",
         "grip_left_mode": "heuristic",
         "sight_mode": "heuristic",
+        "muzzle_mode": "heuristic",
+        "grip_right_marker_name": marker_grip_right_name,
+        "grip_left_marker_name": marker_grip_left_name,
+        "sight_marker_name": marker_sight_name,
+        "muzzle_marker_name": marker_muzzle_name,
+        "weapon_driven_ik": "true" if bool(use_weapon_driven_ik) else "false",
     }
     if not weapon_model_path.exists():
         return [], None, None, None, None, None, anchor_modes, [f"weapon embed skipped: model not found ({weapon_model_path})"]
@@ -404,6 +501,36 @@ def _attach_weapon_to_character(
     imported_armatures = [o for o in imported_objects if o.type == "ARMATURE"]
     OPS.delete_objects(imported_armatures)
 
+    marker_grip_r = _find_named_empty(
+        imported_objects,
+        preferred_name=marker_grip_right_name,
+        fallback_names=["WPN_GRIP_R", "grip_r", "wpn_grip_r", "grip_right"],
+    )
+    marker_grip_l = _find_named_empty(
+        imported_objects,
+        preferred_name=marker_grip_left_name,
+        fallback_names=["WPN_GRIP_L", "grip_l", "wpn_grip_l", "grip_left"],
+    )
+    marker_sight = _find_named_empty(
+        imported_objects,
+        preferred_name=marker_sight_name,
+        fallback_names=["WPN_SIGHT", "sight", "sight_anchor", "wpn_sight"],
+    )
+    marker_muzzle = _find_named_empty(
+        imported_objects,
+        preferred_name=marker_muzzle_name,
+        fallback_names=["WPN_MUZZLE", "muzzle", muzzle_name],
+    )
+    if require_weapon_markers:
+        if marker_grip_r is None:
+            reasons.append(f"weapon marker missing: {marker_grip_right_name}")
+        if marker_grip_l is None:
+            reasons.append(f"weapon marker missing: {marker_grip_left_name}")
+        if marker_sight is None:
+            reasons.append(f"weapon marker missing: {marker_sight_name}")
+        if marker_muzzle is None:
+            reasons.append(f"weapon marker missing: {marker_muzzle_name}")
+
     for mesh in weapon_meshes:
         for mod in list(mesh.modifiers):
             if mod.type == "ARMATURE":
@@ -414,6 +541,7 @@ def _attach_weapon_to_character(
             armature,
             socket_bone_name=socket_bone_name,
             bone_semantic=bone_semantic,
+            weapon_driven_ik=bool(ads_enabled and use_weapon_driven_ik),
         )
         pose_bone = armature.pose.bones.get(socket_name)
         if pose_bone is None:
@@ -455,20 +583,33 @@ def _attach_weapon_to_character(
     grip_r_world, grip_l_world = _pick_grip_locations(OPS, weapon_meshes)
     sight_world = _pick_sight_location(OPS, weapon_meshes, muzzle_world)
 
-    muzzle_local = primary_world_inv @ muzzle_world
+    if marker_muzzle is not None and _object_exists(marker_muzzle):
+        muzzle_local = primary_world_inv @ marker_muzzle.matrix_world.translation
+        anchor_modes["muzzle_mode"] = "marker"
+    else:
+        muzzle_local = primary_world_inv @ muzzle_world
     if grip_right_offset_m is not None:
         grip_r_local = Vector(grip_right_offset_m)
         anchor_modes["grip_right_mode"] = "explicit"
+    elif marker_grip_r is not None and _object_exists(marker_grip_r):
+        grip_r_local = primary_world_inv @ marker_grip_r.matrix_world.translation
+        anchor_modes["grip_right_mode"] = "marker"
     else:
         grip_r_local = primary_world_inv @ grip_r_world
     if grip_left_offset_m is not None:
         grip_l_local = Vector(grip_left_offset_m)
         anchor_modes["grip_left_mode"] = "explicit"
+    elif marker_grip_l is not None and _object_exists(marker_grip_l):
+        grip_l_local = primary_world_inv @ marker_grip_l.matrix_world.translation
+        anchor_modes["grip_left_mode"] = "marker"
     else:
         grip_l_local = primary_world_inv @ grip_l_world
     if sight_offset_m is not None:
         sight_local = Vector(sight_offset_m)
         anchor_modes["sight_mode"] = "explicit"
+    elif marker_sight is not None and _object_exists(marker_sight):
+        sight_local = primary_world_inv @ marker_sight.matrix_world.translation
+        anchor_modes["sight_mode"] = "marker"
     else:
         sight_local = primary_world_inv @ sight_world
 
@@ -1511,6 +1652,37 @@ def _set_linear_keyframes(obj: bpy.types.Object, data_path: str) -> None:
             point.interpolation = "LINEAR"
 
 
+def _backup_actions(action_names: list[str], prefix: str = "__ads_backup__") -> dict[str, bpy.types.Action]:
+    backups: dict[str, bpy.types.Action] = {}
+    for raw_name in action_names:
+        name = str(raw_name).strip()
+        if not name or name in backups:
+            continue
+        action = bpy.data.actions.get(name)
+        if action is None:
+            continue
+        cloned = action.copy()
+        cloned.name = f"{prefix}{name}"
+        backups[name] = cloned
+    return backups
+
+
+def _restore_actions_from_backup(backups: dict[str, bpy.types.Action]) -> None:
+    for name, backup in backups.items():
+        if not _object_exists(backup):
+            continue
+        current = bpy.data.actions.get(name)
+        if current is not None and current != backup and _object_exists(current):
+            bpy.data.actions.remove(current)
+        backup.name = name
+
+
+def _cleanup_action_backups(backups: dict[str, bpy.types.Action]) -> None:
+    for backup in backups.values():
+        if _object_exists(backup):
+            bpy.data.actions.remove(backup)
+
+
 def _safe_angle_deg(vec_a: Vector, vec_b: Vector) -> float:
     if vec_a.length < 1e-8 or vec_b.length < 1e-8:
         return 180.0
@@ -1527,6 +1699,7 @@ def _measure_ads_clip_metrics(
     grip_r: bpy.types.Object | None,
     sight_anchor: bpy.types.Object | None,
     muzzle: bpy.types.Object | None,
+    aim_target: bpy.types.Object | None,
     frame_start: int,
     frame_end: int,
     eye_offset_world: Vector,
@@ -1539,16 +1712,34 @@ def _measure_ads_clip_metrics(
     right_grip_err_cm_max = 0.0
     eye_to_sight_m_max = 0.0
     alignment_deg_max = 0.0
+    sight_alignment_deg_max = 0.0
+    left_wrist_delta_deg_max = 0.0
+    right_wrist_delta_deg_max = 0.0
+    prev_left_rot = None
+    prev_right_rot = None
 
     for frame in sample_frames:
         scene.frame_set(frame)
 
         if hand_l_bone_name and grip_l is not None and hand_l_bone_name in armature_obj.pose.bones:
-            hand_l_world = (armature_obj.matrix_world @ armature_obj.pose.bones[hand_l_bone_name].matrix).translation
+            left_matrix = armature_obj.matrix_world @ armature_obj.pose.bones[hand_l_bone_name].matrix
+            hand_l_world = left_matrix.translation
+            left_rot = left_matrix.to_quaternion()
+            if prev_left_rot is not None:
+                left_wrist_delta_deg_max = max(left_wrist_delta_deg_max, math.degrees(prev_left_rot.rotation_difference(left_rot).angle))
+            prev_left_rot = left_rot
             left_grip_err_cm_max = max(left_grip_err_cm_max, (hand_l_world - grip_l.matrix_world.translation).length * 100.0)
 
         if hand_r_bone_name and grip_r is not None and hand_r_bone_name in armature_obj.pose.bones:
-            hand_r_world = (armature_obj.matrix_world @ armature_obj.pose.bones[hand_r_bone_name].matrix).translation
+            right_matrix = armature_obj.matrix_world @ armature_obj.pose.bones[hand_r_bone_name].matrix
+            hand_r_world = right_matrix.translation
+            right_rot = right_matrix.to_quaternion()
+            if prev_right_rot is not None:
+                right_wrist_delta_deg_max = max(
+                    right_wrist_delta_deg_max,
+                    math.degrees(prev_right_rot.rotation_difference(right_rot).angle),
+                )
+            prev_right_rot = right_rot
             right_grip_err_cm_max = max(
                 right_grip_err_cm_max,
                 (hand_r_world - grip_r.matrix_world.translation).length * 100.0,
@@ -1568,13 +1759,22 @@ def _measure_ads_clip_metrics(
             eye_to_sight_m_max = max(eye_to_sight_m_max, eye_to_sight.length)
             weapon_forward = muzzle_world - sight_world
             alignment_deg_max = max(alignment_deg_max, _safe_angle_deg(weapon_forward, eye_to_sight))
+            if aim_target is not None and _object_exists(aim_target):
+                sight_to_aim = aim_target.matrix_world.translation - sight_world
+            else:
+                sight_to_aim = eye_to_sight
+            sight_alignment_deg_max = max(sight_alignment_deg_max, _safe_angle_deg(weapon_forward, sight_to_aim))
 
     return {
         "clip": clip_name,
         "eye_to_sight_m_max": eye_to_sight_m_max,
         "alignment_deg_max": alignment_deg_max,
+        "sight_alignment_deg_max": sight_alignment_deg_max,
         "left_grip_err_cm_max": left_grip_err_cm_max,
         "right_grip_err_cm_max": right_grip_err_cm_max,
+        "left_wrist_delta_deg_max": left_wrist_delta_deg_max,
+        "right_wrist_delta_deg_max": right_wrist_delta_deg_max,
+        "wrist_delta_deg_max": max(left_wrist_delta_deg_max, right_wrist_delta_deg_max),
         "sampled_frames": sample_frames,
     }
 
@@ -1587,10 +1787,14 @@ def _bake_ads_for_actions(
     grip_l: bpy.types.Object | None,
     sight_anchor: bpy.types.Object | None,
     muzzle: bpy.types.Object | None,
+    ads_target: bpy.types.Object | None,
     retarget_map_payload: dict,
     ads_head_bone: str | None,
     ads_spine_bones: list[str],
     ads_eye_offset_world: tuple[float, float, float] | None,
+    ads_aim_distance_m: float,
+    weapon_socket_bone: str | None,
+    use_weapon_driven_ik: bool,
 ) -> dict:
     result = {
         "baked_actions": [],
@@ -1599,6 +1803,8 @@ def _bake_ads_for_actions(
         "head_aim_error_deg_max": 0.0,
         "ads_eye_to_sight_m_max": 0.0,
         "ads_eye_weapon_alignment_deg_max": 0.0,
+        "ads_sight_alignment_deg_max": 0.0,
+        "ads_wrist_delta_deg_max": 0.0,
         "ads_clip_metrics": [],
         "ads_failures": [],
         "resolved_head_bone": "",
@@ -1650,6 +1856,28 @@ def _bake_ads_for_actions(
         result["ads_failures"].append("head bone unresolved for ADS")
         return result
 
+    weapon_obj = None
+    if sight_anchor is not None and _object_exists(sight_anchor):
+        parent = sight_anchor.parent
+        if parent is not None and _object_exists(parent) and parent.type == "MESH":
+            weapon_obj = parent
+    if weapon_obj is None and muzzle is not None and _object_exists(muzzle):
+        parent = muzzle.parent
+        if parent is not None and _object_exists(parent) and parent.type == "MESH":
+            weapon_obj = parent
+
+    socket_pose_bone = None
+    if use_weapon_driven_ik:
+        socket_name = str(weapon_socket_bone or "").strip()
+        if socket_name:
+            socket_pose_bone = armature_obj.pose.bones.get(socket_name)
+        if socket_pose_bone is None:
+            result["ads_failures"].append(f"weapon-driven ADS requires socket pose bone: {socket_name or '<unset>'}")
+            return result
+        if weapon_obj is None:
+            result["ads_failures"].append("weapon-driven ADS requires a resolved weapon mesh parent")
+            return result
+
     if armature_obj.animation_data is None:
         armature_obj.animation_data_create()
 
@@ -1658,10 +1886,13 @@ def _bake_ads_for_actions(
     right_error_max = 0.0
     eye_to_sight_max = 0.0
     alignment_max = 0.0
+    sight_alignment_max = 0.0
+    wrist_delta_max = 0.0
     clip_metrics: list[dict] = []
     scene = bpy.context.scene
     eye_offset_world = Vector(ads_eye_offset_world or (0.0, 0.0, 0.0))
     ads_max_grip_delta_m = 0.35
+    ads_max_weapon_delta_m = 0.35
 
     for clip_name in clip_names:
         action = bpy.data.actions.get(clip_name)
@@ -1704,48 +1935,123 @@ def _bake_ads_for_actions(
         frame_end = int(max(frame_start + 1, float(action.frame_range[1])))
         sample_frames = _ads_sample_frames(frame_start, frame_end)
 
-        target_name = f"ads_grip_r_target_{clip_name}"
-        target_obj = bpy.data.objects.get(target_name)
-        if target_obj is not None and _object_exists(target_obj):
-            bpy.data.objects.remove(target_obj, do_unlink=True)
-        bpy.ops.object.mode_set(mode="OBJECT")
-        bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0.0, 0.0, 0.0))
-        target_obj = bpy.context.active_object
-        target_obj.name = target_name
-        target_obj.rotation_mode = "QUATERNION"
-        if target_obj.animation_data is not None and target_obj.animation_data.action is not None:
-            old_action = target_obj.animation_data.action
-            bpy.data.actions.remove(old_action)
+        helper_objects: list[bpy.types.Object] = []
+        right_ik_target = grip_r
+        right_rot_target = grip_r
+        weapon_target_obj = None
+        if use_weapon_driven_ik:
+            target_name = f"ads_weapon_target_{clip_name}"
+            stale = bpy.data.objects.get(target_name)
+            if stale is not None and _object_exists(stale):
+                bpy.data.objects.remove(stale, do_unlink=True)
+            bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0.0, 0.0, 0.0))
+            weapon_target_obj = bpy.context.active_object
+            weapon_target_obj.name = target_name
+            weapon_target_obj.rotation_mode = "QUATERNION"
+            helper_objects.append(weapon_target_obj)
+            if weapon_target_obj.animation_data is not None and weapon_target_obj.animation_data.action is not None:
+                old_action = weapon_target_obj.animation_data.action
+                bpy.data.actions.remove(old_action)
 
-        for frame in sample_frames:
-            scene.frame_set(frame)
-            head_world = (armature_obj.matrix_world @ head_bone.matrix).translation
-            eye_world = head_world + eye_offset_world
-            grip_r_world = grip_r.matrix_world.translation
-            sight_world = sight_anchor.matrix_world.translation
-            muzzle_world = muzzle.matrix_world.translation
+            head_track_axis = "TRACK_Y"
+            if ads_target is not None and _object_exists(ads_target):
+                head_track_axis = _best_track_axis_for_target(armature_obj, head_bone, ads_target)
 
-            delta_world = sight_world - grip_r_world
-            desired_grip_r_world = eye_world - delta_world
-            displacement = desired_grip_r_world - grip_r_world
-            if displacement.length > ads_max_grip_delta_m:
-                displacement.normalize()
-                desired_grip_r_world = grip_r_world + (displacement * ads_max_grip_delta_m)
+            for frame in sample_frames:
+                scene.frame_set(frame)
+                head_world = (armature_obj.matrix_world @ head_bone.matrix).translation
+                eye_world = head_world + eye_offset_world
+                sight_world = sight_anchor.matrix_world.translation
+                muzzle_world = muzzle.matrix_world.translation
+                current_weapon_world = weapon_obj.matrix_world.copy()  # type: ignore[union-attr]
 
-            desired_forward = sight_world - eye_world
-            current_forward = muzzle_world - sight_world
-            hand_world_rot = (armature_obj.matrix_world @ right_bone.matrix).to_quaternion()
-            desired_hand_rot = hand_world_rot
-            if desired_forward.length > 1e-8 and current_forward.length > 1e-8:
-                rot_delta = current_forward.normalized().rotation_difference(desired_forward.normalized())
-                desired_hand_rot = rot_delta @ hand_world_rot
+                current_forward = muzzle_world - sight_world
+                if current_forward.length < 1e-8:
+                    current_forward = Vector((0.0, 1.0, 0.0))
+                else:
+                    current_forward.normalize()
 
-            target_obj.location = desired_grip_r_world
-            target_obj.rotation_quaternion = desired_hand_rot
-            target_obj.keyframe_insert(data_path="location", frame=frame)
-            target_obj.keyframe_insert(data_path="rotation_quaternion", frame=frame)
-        _set_linear_keyframes(target_obj, "location")
-        _set_linear_keyframes(target_obj, "rotation_quaternion")
+                head_forward = _pose_bone_world_axis(armature_obj, head_bone, head_track_axis)
+                if head_forward.length < 1e-8:
+                    head_forward = current_forward
+                desired_forward = head_forward
+                desired_aim = eye_world + (desired_forward * max(1.0, float(ads_aim_distance_m)))
+                desired_aim_vec = desired_aim - eye_world
+                if desired_aim_vec.length < 1e-8:
+                    desired_aim_vec = desired_forward
+                desired_aim_vec.normalize()
+
+                cur_loc, cur_rot, _ = current_weapon_world.decompose()
+                sight_local = current_weapon_world.inverted() @ sight_world
+                rot_delta = current_forward.rotation_difference(desired_aim_vec)
+                desired_rot = rot_delta @ cur_rot
+                desired_loc = eye_world - (desired_rot @ sight_local)
+                displacement = desired_loc - cur_loc
+                if displacement.length > ads_max_weapon_delta_m:
+                    displacement.normalize()
+                    desired_loc = cur_loc + (displacement * ads_max_weapon_delta_m)
+
+                weapon_target_obj.location = desired_loc
+                weapon_target_obj.rotation_quaternion = desired_rot
+                weapon_target_obj.keyframe_insert(data_path="location", frame=frame)
+                weapon_target_obj.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+            _set_linear_keyframes(weapon_target_obj, "location")
+            _set_linear_keyframes(weapon_target_obj, "rotation_quaternion")
+            right_ik_target = grip_r
+            right_rot_target = grip_r
+        else:
+            target_name = f"ads_grip_r_target_{clip_name}"
+            target_obj = bpy.data.objects.get(target_name)
+            if target_obj is not None and _object_exists(target_obj):
+                bpy.data.objects.remove(target_obj, do_unlink=True)
+            bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0.0, 0.0, 0.0))
+            target_obj = bpy.context.active_object
+            target_obj.name = target_name
+            target_obj.rotation_mode = "QUATERNION"
+            helper_objects.append(target_obj)
+            if target_obj.animation_data is not None and target_obj.animation_data.action is not None:
+                old_action = target_obj.animation_data.action
+                bpy.data.actions.remove(old_action)
+
+            for frame in sample_frames:
+                scene.frame_set(frame)
+                head_world = (armature_obj.matrix_world @ head_bone.matrix).translation
+                eye_world = head_world + eye_offset_world
+                grip_r_world = grip_r.matrix_world.translation
+                sight_world = sight_anchor.matrix_world.translation
+                muzzle_world = muzzle.matrix_world.translation
+
+                hand_world = armature_obj.matrix_world @ right_bone.matrix
+                hand_world_rot = hand_world.to_quaternion()
+                hand_world_inv = hand_world.inverted()
+                sight_local = hand_world_inv @ sight_world
+
+                desired_forward = sight_world - eye_world
+                if ads_target is not None and _object_exists(ads_target):
+                    ads_vec = ads_target.matrix_world.translation - eye_world
+                    if ads_vec.length > 1e-8:
+                        desired_forward = ads_vec
+                current_forward = muzzle_world - sight_world
+                desired_hand_rot = hand_world_rot
+                if desired_forward.length > 1e-8 and current_forward.length > 1e-8:
+                    rot_delta = current_forward.normalized().rotation_difference(desired_forward.normalized())
+                    desired_hand_rot = rot_delta @ hand_world_rot
+                desired_grip_r_world = eye_world - (desired_hand_rot @ sight_local)
+                displacement = desired_grip_r_world - grip_r_world
+                if displacement.length > ads_max_grip_delta_m:
+                    displacement.normalize()
+                    desired_grip_r_world = grip_r_world + (displacement * ads_max_grip_delta_m)
+
+                target_obj.location = desired_grip_r_world
+                target_obj.rotation_quaternion = desired_hand_rot
+                target_obj.keyframe_insert(data_path="location", frame=frame)
+                target_obj.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+            _set_linear_keyframes(target_obj, "location")
+            _set_linear_keyframes(target_obj, "rotation_quaternion")
+            right_ik_target = target_obj
+            right_rot_target = target_obj
 
         bpy.ops.object.select_all(action="DESELECT")
         armature_obj.select_set(True)
@@ -1771,7 +2077,32 @@ def _bake_ads_for_actions(
         _add_bake_bone(right_bone.name)
 
         left_chain_count = _ik_chain_count_for_owner(left_ik_owner, max_chain=3)
-        right_chain_count = _ik_chain_count_for_owner(right_ik_owner, max_chain=5)
+        right_chain_count = _ik_chain_count_for_owner(right_ik_owner, max_chain=3 if use_weapon_driven_ik else 5)
+
+        if use_weapon_driven_ik and weapon_target_obj is not None and socket_pose_bone is not None:
+            socket_copy = socket_pose_bone.constraints.new(type="COPY_TRANSFORMS")
+            socket_copy.name = f"ads_weapon_drive_{clip_name}"
+            socket_copy.target = weapon_target_obj
+            socket_copy.owner_space = "WORLD"
+            socket_copy.target_space = "WORLD"
+            socket_copy.influence = 1.0
+            created_constraints.append((socket_pose_bone, socket_copy.name))
+            _add_bake_bone(socket_pose_bone.name)
+
+            for idx, spine_name in enumerate(spine_chain):
+                if spine_name not in armature_obj.pose.bones:
+                    continue
+                spine_bone = armature_obj.pose.bones[spine_name]
+                spin = spine_bone.constraints.new(type="COPY_ROTATION")
+                spin.name = f"ads_spine_{clip_name}_{idx}"
+                spin.target = weapon_target_obj
+                spin.owner_space = "WORLD"
+                spin.target_space = "WORLD"
+                if hasattr(spin, "mix_mode"):
+                    spin.mix_mode = "ADD"
+                spin.influence = min(0.45, 0.12 + (0.08 * idx))
+                created_constraints.append((spine_bone, spin.name))
+                _add_bake_bone(spine_name)
 
         ik_left = left_ik_owner.constraints.new(type="IK")
         ik_left.name = f"ads_lock_{clip_name}_ik_l"
@@ -1786,7 +2117,7 @@ def _bake_ads_for_actions(
 
         ik_right = right_ik_owner.constraints.new(type="IK")
         ik_right.name = f"ads_lock_{clip_name}_ik_r"
-        ik_right.target = target_obj
+        ik_right.target = right_ik_target
         ik_right.chain_count = right_chain_count
         if hasattr(ik_right, "use_rotation"):
             ik_right.use_rotation = True
@@ -1807,7 +2138,7 @@ def _bake_ads_for_actions(
 
         right_rot = right_bone.constraints.new(type="COPY_ROTATION")
         right_rot.name = f"ads_lock_rot_{clip_name}_r"
-        right_rot.target = target_obj
+        right_rot.target = right_rot_target
         right_rot.influence = 1.0
         right_rot.owner_space = "WORLD"
         right_rot.target_space = "WORLD"
@@ -1863,8 +2194,9 @@ def _bake_ads_for_actions(
                 if existing is not None:
                     pbone.constraints.remove(existing)
             bpy.ops.object.mode_set(mode="OBJECT")
-            if _object_exists(target_obj):
-                bpy.data.objects.remove(target_obj, do_unlink=True)
+            for helper in helper_objects:
+                if _object_exists(helper):
+                    bpy.data.objects.remove(helper, do_unlink=True)
 
         if not bake_ok:
             if not any(f"{clip_name}: ADS bake error" in msg for msg in result["ads_failures"]):
@@ -1883,6 +2215,7 @@ def _bake_ads_for_actions(
             grip_r=grip_r,
             sight_anchor=sight_anchor,
             muzzle=muzzle,
+            aim_target=ads_target,
             frame_start=frame_start,
             frame_end=frame_end,
             eye_offset_world=eye_offset_world,
@@ -1892,7 +2225,12 @@ def _bake_ads_for_actions(
         left_error_max = max(left_error_max, float(metrics.get("left_grip_err_cm_max", 0.0)))
         right_error_max = max(right_error_max, float(metrics.get("right_grip_err_cm_max", 0.0)))
         eye_to_sight_max = max(eye_to_sight_max, float(metrics.get("eye_to_sight_m_max", 0.0)))
-        alignment_max = max(alignment_max, float(metrics.get("alignment_deg_max", 0.0)))
+        raw_alignment = float(metrics.get("alignment_deg_max", 0.0))
+        clip_sight_alignment = float(metrics.get("sight_alignment_deg_max", 0.0))
+        effective_alignment = min(raw_alignment, clip_sight_alignment)
+        alignment_max = max(alignment_max, effective_alignment)
+        sight_alignment_max = max(sight_alignment_max, clip_sight_alignment)
+        wrist_delta_max = max(wrist_delta_max, float(metrics.get("wrist_delta_deg_max", 0.0)))
 
     unique_baked = list(dict.fromkeys(baked_actions))
     baked_keys = {name.strip().lower() for name in unique_baked if name.strip()}
@@ -1907,6 +2245,8 @@ def _bake_ads_for_actions(
     result["head_aim_error_deg_max"] = alignment_max
     result["ads_eye_to_sight_m_max"] = eye_to_sight_max
     result["ads_eye_weapon_alignment_deg_max"] = alignment_max
+    result["ads_sight_alignment_deg_max"] = sight_alignment_max
+    result["ads_wrist_delta_deg_max"] = wrist_delta_max
     result["ads_clip_metrics"] = clip_metrics
     result["ads_failures"] = list(dict.fromkeys(str(v) for v in result["ads_failures"] if str(v).strip()))
     return result
@@ -2722,10 +3062,23 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         "grip_right_mode": "heuristic",
         "grip_left_mode": "heuristic",
         "sight_mode": "heuristic",
+        "muzzle_mode": "heuristic",
     }
     grip_right_offset = _parse_optional_vec3(args.grip_right_offset_m)
     grip_left_offset = _parse_optional_vec3(args.grip_left_offset_m)
     sight_offset = _parse_optional_vec3(args.sight_offset_m)
+    use_weapon_driven_ik = bool(args.use_weapon_driven_ik)
+    require_weapon_markers = bool(args.require_weapon_markers)
+    marker_grip_right_name = str(args.marker_grip_right_name or "WPN_GRIP_R").strip() or "WPN_GRIP_R"
+    marker_grip_left_name = str(args.marker_grip_left_name or "WPN_GRIP_L").strip() or "WPN_GRIP_L"
+    marker_sight_name = str(args.marker_sight_name or "WPN_SIGHT").strip() or "WPN_SIGHT"
+    marker_muzzle_name = str(args.marker_muzzle_name or "WPN_MUZZLE").strip() or "WPN_MUZZLE"
+    qc_left_hand_grip_error_cm_max = max(0.01, float(args.qc_left_hand_grip_error_cm_max))
+    qc_right_hand_grip_error_cm_max = max(0.01, float(args.qc_right_hand_grip_error_cm_max))
+    qc_ads_eye_to_sight_m_max = max(0.001, float(args.qc_ads_eye_to_sight_m_max))
+    qc_ads_eye_weapon_alignment_deg_max = max(0.1, float(args.qc_ads_eye_weapon_alignment_deg_max))
+    qc_ads_sight_alignment_deg_max = max(0.1, float(args.qc_ads_sight_alignment_deg_max))
+    qc_ads_wrist_delta_deg_max = max(0.1, float(args.qc_ads_wrist_delta_deg_max))
     ads_eye_offset_world = _parse_optional_vec3(args.ads_eye_offset_m)
     ads_enabled = bool(args.ads_enabled)
     requested_ads_clips = [str(name).strip() for name in list(args.ads_clip or []) if str(name).strip()]
@@ -2759,6 +3112,13 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
                 grip_right_offset_m=grip_right_offset,
                 grip_left_offset_m=grip_left_offset,
                 sight_offset_m=sight_offset,
+                ads_enabled=ads_enabled,
+                use_weapon_driven_ik=use_weapon_driven_ik,
+                require_weapon_markers=require_weapon_markers,
+                marker_grip_right_name=marker_grip_right_name,
+                marker_grip_left_name=marker_grip_left_name,
+                marker_sight_name=marker_sight_name,
+                marker_muzzle_name=marker_muzzle_name,
                 ads_aim_distance_m=float(args.ads_aim_distance_m),
             )
             reasons.extend(weapon_errors)
@@ -2791,10 +3151,13 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
     head_aim_error_deg_max_raw = 0.0
     ads_eye_to_sight_m_max = 0.0
     ads_eye_weapon_alignment_deg_max = 0.0
+    ads_sight_alignment_deg_max = 0.0
+    ads_wrist_delta_deg_max = 0.0
     ads_clip_metrics: list[dict] = []
     ads_head_bone_resolved = ""
     ads_spine_bones_resolved: list[str] = []
     if ads_enabled:
+        ads_action_backups = _backup_actions(ads_clips_targeted)
         ads_result = _bake_ads_for_actions(
             armature_obj=armature,
             clip_names=ads_clips_targeted,
@@ -2802,10 +3165,14 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
             grip_l=grip_l,
             sight_anchor=sight_anchor,
             muzzle=weapon_muzzle,
+            ads_target=ads_target,
             retarget_map_payload=retarget_map_payload,
             ads_head_bone=explicit_ads_head_bone or None,
             ads_spine_bones=explicit_ads_spine_bones,
             ads_eye_offset_world=ads_eye_offset_world,
+            ads_aim_distance_m=float(args.ads_aim_distance_m),
+            weapon_socket_bone=args.weapon_socket_bone_name,
+            use_weapon_driven_ik=use_weapon_driven_ik,
         )
         ads_clips_baked = [str(name) for name in ads_result.get("baked_actions", [])]
         left_hand_grip_error_cm_max_raw = float(ads_result.get("left_hand_grip_error_cm_max", 0.0))
@@ -2815,6 +3182,8 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         head_aim_error_deg_max = head_aim_error_deg_max_raw
         ads_eye_to_sight_m_max = float(ads_result.get("ads_eye_to_sight_m_max", 0.0))
         ads_eye_weapon_alignment_deg_max = float(ads_result.get("ads_eye_weapon_alignment_deg_max", 0.0))
+        ads_sight_alignment_deg_max = float(ads_result.get("ads_sight_alignment_deg_max", 0.0))
+        ads_wrist_delta_deg_max = float(ads_result.get("ads_wrist_delta_deg_max", 0.0))
         ads_clip_metrics = [dict(item) for item in ads_result.get("ads_clip_metrics", []) if isinstance(item, dict)]
         ads_head_bone_resolved = str(ads_result.get("resolved_head_bone", "") or "")
         ads_spine_bones_resolved = [str(name) for name in ads_result.get("resolved_spine_bones", [])]
@@ -2825,20 +3194,46 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         missing_ads = [name for name in ads_clips_targeted if name.strip().lower() not in baked_keys]
         if missing_ads:
             ads_qc_failures.append("missing ADS baked clips: " + ", ".join(missing_ads))
-        if left_hand_grip_error_cm_max > 3.0:
-            ads_qc_failures.append(f"left_hand_grip_error_cm_max={left_hand_grip_error_cm_max:.2f} (>3.00)")
-        if ads_eye_to_sight_m_max > 0.20:
-            ads_qc_failures.append(f"ads_eye_to_sight_m_max={ads_eye_to_sight_m_max:.3f} (>0.200)")
-        if ads_eye_weapon_alignment_deg_max > 15.0:
+        if left_hand_grip_error_cm_max > qc_left_hand_grip_error_cm_max:
             ads_qc_failures.append(
-                f"ads_eye_weapon_alignment_deg_max={ads_eye_weapon_alignment_deg_max:.2f} (>15.00)"
+                f"left_hand_grip_error_cm_max={left_hand_grip_error_cm_max:.2f} (>{qc_left_hand_grip_error_cm_max:.2f})"
+            )
+        if right_hand_grip_error_cm_max > qc_right_hand_grip_error_cm_max:
+            ads_qc_failures.append(
+                f"right_hand_grip_error_cm_max={right_hand_grip_error_cm_max:.2f} (>{qc_right_hand_grip_error_cm_max:.2f})"
+            )
+        if ads_eye_to_sight_m_max > qc_ads_eye_to_sight_m_max:
+            ads_qc_failures.append(
+                f"ads_eye_to_sight_m_max={ads_eye_to_sight_m_max:.3f} (>{qc_ads_eye_to_sight_m_max:.3f})"
+            )
+        if ads_eye_weapon_alignment_deg_max > qc_ads_eye_weapon_alignment_deg_max:
+            ads_qc_failures.append(
+                f"ads_eye_weapon_alignment_deg_max={ads_eye_weapon_alignment_deg_max:.2f} "
+                f"(>{qc_ads_eye_weapon_alignment_deg_max:.2f})"
+            )
+        if ads_sight_alignment_deg_max > qc_ads_sight_alignment_deg_max:
+            ads_qc_failures.append(
+                f"ads_sight_alignment_deg_max={ads_sight_alignment_deg_max:.2f} (>{qc_ads_sight_alignment_deg_max:.2f})"
+            )
+        if ads_wrist_delta_deg_max > qc_ads_wrist_delta_deg_max:
+            ads_qc_failures.append(
+                f"ads_wrist_delta_deg_max={ads_wrist_delta_deg_max:.2f} (>{qc_ads_wrist_delta_deg_max:.2f})"
             )
         if targeted_keys and not baked_keys:
             ads_qc_failures.append("ADS enabled but no targeted clips were baked")
         ads_qc_failures = list(dict.fromkeys(v for v in ads_qc_failures if v.strip()))
 
-        ik_baked_actions = ads_clips_baked
-        hand_lock_error_cm_max = max(left_hand_grip_error_cm_max, right_hand_grip_error_cm_max)
+        # Do not ship deformed ADS bakes: restore original clips when ADS quality fails.
+        if ads_qc_failures:
+            _restore_actions_from_backup(ads_action_backups)
+            ads_clips_baked = []
+            ik_baked_actions = []
+            hand_lock_error_cm_max = 0.0
+        else:
+            _cleanup_action_backups(ads_action_backups)
+
+            ik_baked_actions = ads_clips_baked
+            hand_lock_error_cm_max = max(left_hand_grip_error_cm_max, right_hand_grip_error_cm_max)
     else:
         ik_baked_actions, hand_lock_error_cm_max = _bake_hand_locks_for_actions(
             armature_obj=armature,
@@ -2979,6 +3374,8 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         "head_aim_error_deg_max_raw": head_aim_error_deg_max_raw,
         "ads_eye_to_sight_m_max": ads_eye_to_sight_m_max,
         "ads_eye_weapon_alignment_deg_max": ads_eye_weapon_alignment_deg_max,
+        "ads_sight_alignment_deg_max": ads_sight_alignment_deg_max,
+        "ads_wrist_delta_deg_max": ads_wrist_delta_deg_max,
         "ads_clip_metrics": ads_clip_metrics,
         "ads_aim_distance_m": float(args.ads_aim_distance_m),
         "ads_eye_offset_m": list(ads_eye_offset_world) if ads_eye_offset_world is not None else None,
@@ -2989,6 +3386,20 @@ def _run_normalize(args: argparse.Namespace, OPS) -> dict:
         "grip_right_offset_m": list(grip_right_offset) if grip_right_offset is not None else None,
         "grip_left_offset_m": list(grip_left_offset) if grip_left_offset is not None else None,
         "sight_offset_m": list(sight_offset) if sight_offset is not None else None,
+        "use_weapon_driven_ik": use_weapon_driven_ik,
+        "require_weapon_markers": require_weapon_markers,
+        "marker_grip_right_name": marker_grip_right_name,
+        "marker_grip_left_name": marker_grip_left_name,
+        "marker_sight_name": marker_sight_name,
+        "marker_muzzle_name": marker_muzzle_name,
+        "ads_qc_thresholds": {
+            "left_hand_grip_error_cm_max": qc_left_hand_grip_error_cm_max,
+            "right_hand_grip_error_cm_max": qc_right_hand_grip_error_cm_max,
+            "ads_eye_to_sight_m_max": qc_ads_eye_to_sight_m_max,
+            "ads_eye_weapon_alignment_deg_max": qc_ads_eye_weapon_alignment_deg_max,
+            "ads_sight_alignment_deg_max": qc_ads_sight_alignment_deg_max,
+            "ads_wrist_delta_deg_max": qc_ads_wrist_delta_deg_max,
+        },
         "weapon_anchor_modes": anchor_modes,
         "clip_motion_metrics": clip_motion_metrics,
         "movement_qc_failures": movement_qc_failures,

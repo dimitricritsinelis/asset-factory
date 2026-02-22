@@ -52,6 +52,11 @@ loadout:
       offset_m: [0.0, 0.0, 0.0]
       rotation_deg: [0.0, 0.0, 0.0]
       scale: 1.0
+      use_weapon_driven_ik: true
+      marker_grip_right_name: WPN_GRIP_R
+      marker_grip_left_name: WPN_GRIP_L
+      marker_sight_name: WPN_SIGHT
+      marker_muzzle_name: WPN_MUZZLE
       ads_enabled: true
       ads_clip_names: [idle_rifle_in_place, walk_rifle_in_place, run_rifle_in_place, strafe_left_rifle_in_place]
       grip_right_offset_m: [-0.034, 0.054, 0.25]
@@ -61,6 +66,12 @@ loadout:
       ads_aim_distance_m: 12.0
       ads_head_bone: Head
       ads_spine_bones: [Spine01, Spine02, R_Clavicle, NeckTwist01, NeckTwist02]
+      qc_left_hand_grip_error_cm_max: 2.0
+      qc_right_hand_grip_error_cm_max: 2.0
+      qc_ads_eye_to_sight_m_max: 0.05
+      qc_ads_eye_weapon_alignment_deg_max: 2.0
+      qc_ads_sight_alignment_deg_max: 2.0
+      qc_ads_wrist_delta_deg_max: 45.0
     muzzle_socket_name: muzzle
 
 character_qc_enforced: true
@@ -99,7 +110,7 @@ character_qc_enforced: true
   - missing requested clips
   - hand lock error threshold (`hand_lock_error_cm_max`)
   - ADS clip bake coverage (`ads_clips_targeted` must be covered by `ads_clips_baked` when `ads_enabled=true`)
-  - ADS geometric thresholds (`left_hand_grip_error_cm_max <= 3.0`, `ads_eye_to_sight_m_max <= 0.20`, `ads_eye_weapon_alignment_deg_max <= 15.0`)
+  - ADS geometric thresholds from `loadout.primary_weapon.attach` (`qc_*` fields)
   - floating disconnected shards after cleanup (`floating_components_after > 0`)
   - movement QC failures from clip metrics (`movement_qc_failures`)
 - Override only when you explicitly want degraded output:
@@ -109,6 +120,9 @@ character_qc_enforced: true
 - `grip_right_offset_m`: optional weapon-local anchor for right hand diagnostics.
 - `grip_left_offset_m`: optional weapon-local left foregrip lock anchor.
 - `sight_offset_m`: optional weapon-local sight anchor used for ADS aim targeting.
+- `use_weapon_driven_ik`: when `true`, ADS bake drives weapon from a torso socket and solves both hands to weapon grips.
+- `require_weapon_markers`: when `true`, missing marker empties fail character QC (`WPN_GRIP_R/L`, `WPN_SIGHT`, `WPN_MUZZLE` by default).
+- `marker_grip_right_name` / `marker_grip_left_name` / `marker_sight_name` / `marker_muzzle_name`: marker object names to resolve from weapon imports.
 - `ads_eye_offset_m`: optional world-space eye offset added to resolved head-bone position during ADS solve.
 - `ads_enabled`: enable ADS bake pass for this weapon attach.
 - `ads_clip_names`: explicit output clip names to bake in ADS mode.
@@ -116,6 +130,11 @@ character_qc_enforced: true
 - `ads_aim_distance_m`: retained for backward compatibility with existing attach helpers.
 - `ads_head_bone`: optional explicit head bone name.
 - `ads_spine_bones`: optional explicit ordered spine/neck chain.
+- `qc_left_hand_grip_error_cm_max` / `qc_right_hand_grip_error_cm_max`: hand-to-grip thresholds.
+- `qc_ads_eye_to_sight_m_max`: max eye-to-sight distance threshold.
+- `qc_ads_eye_weapon_alignment_deg_max`: max eye-to-weapon-forward angle threshold.
+- `qc_ads_sight_alignment_deg_max`: max sightline-to-aim-target angle threshold.
+- `qc_ads_wrist_delta_deg_max`: max sampled per-frame wrist rotation delta threshold.
 
 ## Movement QC Report Fields
 - `clip_motion_metrics` per exported clip:

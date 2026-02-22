@@ -63,12 +63,24 @@ class WeaponAttachSpec(BaseModel):
     grip_right_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
     grip_left_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
     sight_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
+    use_weapon_driven_ik: bool = False
+    require_weapon_markers: bool = False
+    marker_grip_right_name: str = "WPN_GRIP_R"
+    marker_grip_left_name: str = "WPN_GRIP_L"
+    marker_sight_name: str = "WPN_SIGHT"
+    marker_muzzle_name: str = "WPN_MUZZLE"
     ads_eye_offset_m: list[float] | None = Field(default=None, min_length=3, max_length=3)
     ads_enabled: bool = False
     ads_clip_names: list[str] = Field(default_factory=list)
     ads_aim_distance_m: float = 12.0
     ads_head_bone: str | None = None
     ads_spine_bones: list[str] = Field(default_factory=list)
+    qc_left_hand_grip_error_cm_max: float = Field(default=3.0, gt=0.0)
+    qc_right_hand_grip_error_cm_max: float = Field(default=3.0, gt=0.0)
+    qc_ads_eye_to_sight_m_max: float = Field(default=0.20, gt=0.0)
+    qc_ads_eye_weapon_alignment_deg_max: float = Field(default=15.0, gt=0.0)
+    qc_ads_sight_alignment_deg_max: float = Field(default=15.0, gt=0.0)
+    qc_ads_wrist_delta_deg_max: float = Field(default=90.0, gt=0.0)
 
 
 class PrimaryWeaponSpec(BaseModel):

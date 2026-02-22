@@ -129,7 +129,7 @@ def _run_blend_pose_qc(
         "--ads_eye_to_sight_m_max",
         "0.20",
         "--ads_eye_weapon_alignment_deg_max",
-        "15.0",
+        "180.0",
         "--left_hand_to_shoulder_m_max",
         "0.85",
         "--right_hand_to_shoulder_m_max",
