@@ -1,13 +1,20 @@
 name: enemy_raider
-description: Hostile raider NPC for FPS.
+description: "Ultra high-quality realistic competitive FPS enemy raider based on a Counter-Strike: Global Offensive terrorist visual benchmark, wearing a hood and face covering with layered tactical clothing, chest rig, gloves, cargo pants, and combat boots, while holding an AK-47 and aiming down sights in a tense ready-to-fire pose."
 style:
   genre: realistic-competitive-fps
   keywords:
     - competitive shooter readability
-    - hooded mask
+    - counter-strike global offensive terrorist-side benchmark
+    - ak-47 rifle
+    - aiming down sights
+    - hooded face covering
+    - layered tactical jacket with chest rig
+    - gloves cargo pants and combat boots
+    - sandy tan dark brown and olive tactical palette
+    - ultra high-quality baked realistic textures
 scale_meters: 1.78
-tri_budget: 40000
+tri_budget: 75000
 colors:
-  primary: "#C2A97A"
-  secondary: "#3F4A38"
+  primary: "#A48655"
+  secondary: "#252019"
 seed: 81927
