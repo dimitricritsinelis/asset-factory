@@ -1,0 +1,9 @@
+{
+  "task_id": "fixture-task-123",
+  "status": "success",
+  "output": {
+    "model": "file:///Users/dimitri/Desktop/asset-factory/tests/fixtures/model.glb",
+    "pbr_model": "file:///Users/dimitri/Desktop/asset-factory/tests/fixtures/pbr.glb",
+    "rendered_image": "file:///Users/dimitri/Desktop/asset-factory/tests/fixtures/rendered.png"
+  }
+}

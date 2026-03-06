@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "asset_name": "enemy_raider",
+  "reference_sheet_prompt": "Create a single three-view character sheet for a hostile enemy raider NPC. FRONT on the left, SIDE in the center, BACK on the right. Neutral light-gray background. Same character identity in all views. Believable human proportions, hood and face covering, tactical vest with straps and pouches, cargo pants, boots, gloves, compact backpack. No text, no logos, no watermark, no insignia.",
+  "tripo_prompt": "High-fidelity static enemy raider character mesh for a competitive FPS. Believable human proportions, clean silhouette, hooded mask, tactical vest with pouches and straps, cargo pants, boots, gloves, compact backpack, opaque materials, no logos or text, coherent single character mesh, game-ready detail.",
+  "notes": [
+    "Use front side back views only",
+    "Keep one coherent static mesh"
+  ]
+}

@@ -1,0 +1,13 @@
+name: enemy_raider
+description: Hostile raider NPC for FPS.
+style:
+  genre: realistic-competitive-fps
+  keywords:
+    - competitive shooter readability
+    - hooded mask
+scale_meters: 1.78
+tri_budget: 40000
+colors:
+  primary: "#C2A97A"
+  secondary: "#3F4A38"
+seed: 81927

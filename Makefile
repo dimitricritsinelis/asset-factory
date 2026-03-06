@@ -2,41 +2,24 @@ PYTHON ?= python3
 VENV ?= .venv
 PY := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
+PYPATH := PYTHONPATH="$(CURDIR)/asset_builder_code"
 ARGS ?=
 
-.PHONY: setup smoke test-raider-cleanup test-raider-movement test-raider-ads build build-all clean-temp
+.PHONY: setup build smoke check
 
 setup:
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 
-smoke:
-	$(PY) -m asset_factory build assets_pipeline/tests/smoke_cube.yaml --skip-openai --skip-images --force
-
-test-raider-cleanup:
-	$(PY) assets_pipeline/tests/test_raider_floating_cleanup.py
-
-test-raider-movement:
-	$(PY) assets_pipeline/tests/test_raider_movement_qc.py
-
-test-raider-ads:
-	$(PY) assets_pipeline/tests/test_raider_ads_qc.py
-
 build:
-	@test -n "$(NAME)" || (echo "Usage: make build NAME=<spec_name>" && exit 1)
-	$(PY) -m asset_factory build $(NAME) $(ARGS)
+	@test -n "$(SPEC)" || (echo "SPEC=asset_definitions/enemy_raider.yaml is required" && exit 2)
+	$(PYPATH) $(PY) -m asset_factory build "$(SPEC)" $(ARGS)
 
-build-all:
-	$(PY) -m asset_factory build-all $(ARGS)
+smoke:
+	$(PYPATH) $(PY) -m asset_factory build asset_definitions/enemy_raider.yaml --fixture-replay --force
 
-clean-temp:
-	rm -f assets/models/tests/_*.glb
-	rm -f assets/models/tests/*_seltest*.glb
-	rm -f assets/models/tests/*_norm*.glb
-	rm -f assets/reports/tests/_*.json
-	rm -f assets/reports/tests/*_seltest*.json
-	rm -f assets/reports/tests/*_norm*.json
-	rm -f assets/thumbnails/tests/_*.png
-	rm -f assets/thumbnails/tests/*_seltest*.png
-	rm -f assets/thumbnails/tests/*_norm*.png
+check:
+	$(PYPATH) $(PY) -m py_compile asset_builder_code/asset_factory/*.py
+	$(PYPATH) $(PY) -m asset_factory --help
+	$(MAKE) smoke

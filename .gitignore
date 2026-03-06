@@ -7,22 +7,12 @@ __pycache__/
 # Env
 .env
 
-# Generated assets
-assets/models/**/*.glb
-assets/thumbnails/**/*.png
-assets/reports/**/*.json
-assets_pipeline/refs/*.png
-assets_pipeline/recipes/*.json
-assets_pipeline/blender/*.blend
-assets_pipeline/tripo_raw/
-assets_pipeline/logs/*.log
-assets_pipeline/logs/*_prompt.txt
+# Generated pipeline artifacts
+generated_asset_files/tmp/
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
-
-assets_pipeline/logs/*.txt
-*.blend1
-assets_src_legacy/
+.cursor/
+.claude/
